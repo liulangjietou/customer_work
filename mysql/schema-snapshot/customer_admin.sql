@@ -4,7 +4,7 @@
 -- 生成方式：scripts/export-schema-snapshot.sh
 --           新建临时空库执行 classpath:db/migration 的全部迁移后逐表导出，
 --           自增当前值已抹除。
--- 对应版本：Flyway V107
+-- 对应版本：Flyway V111
 -- 真源：customer-admin-server/src/main/resources/db/migration/
 --       改结构一律新增迁移，改本文件不会生效。
 -- 内容：全部表结构 + 迁移写入的系统种子数据（菜单权限树、角色、默认租户、admin 账号等）。
@@ -138,13 +138,17 @@ CREATE TABLE `ai_agent_improvement_case` (
   `last_error` varchar(1000) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `created_at_ms` bigint NOT NULL,
   `updated_at_ms` bigint NOT NULL,
+  `publish_requested_by` bigint DEFAULT NULL COMMENT '知识发布实际发起人',
+  `reevaluation_attempt_id` char(36) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL COMMENT '本次复评唯一执行编号',
+  `reevaluation_deadline_at_ms` bigint DEFAULT NULL COMMENT '本次复评最晚完成时间',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_improvement_source` (`tenant_id`,`source_type`,`source_key`),
   KEY `idx_improvement_owner_sla` (`tenant_id`,`owner_id`,`status`,`sla_due_at_ms`),
   KEY `idx_improvement_due` (`status`,`next_action_at_ms`,`lease_until_ms`),
   KEY `idx_improvement_publish` (`tenant_id`,`publish_task_id`),
+  CONSTRAINT `chk_improvement_reevaluation_attempt` CHECK (((`status` <> _utf8mb4'REEVALUATING') or ((`reevaluation_attempt_id` is not null) and (`reevaluation_deadline_at_ms` is not null) and (`reevaluation_deadline_at_ms` > 0)))),
   CONSTRAINT `chk_improvement_source_type` CHECK ((`source_type` in (_utf8mb4'KNOWLEDGE_GAP',_utf8mb4'BADCASE'))),
-  CONSTRAINT `chk_improvement_status` CHECK ((`status` in (_utf8mb4'OWNED',_utf8mb4'READY_FOR_REEVALUATION',_utf8mb4'REEVALUATING',_utf8mb4'REEVALUATION_FAILED',_utf8mb4'READY_TO_PUBLISH',_utf8mb4'PUBLISHING',_utf8mb4'PUBLISH_FAILED',_utf8mb4'OBSERVING',_utf8mb4'VERIFIED',_utf8mb4'INEFFECTIVE',_utf8mb4'INCONCLUSIVE',_utf8mb4'CANCELLED')))
+  CONSTRAINT `chk_improvement_status` CHECK ((`status` in (_utf8mb4'OWNED',_utf8mb4'READY_FOR_REEVALUATION',_utf8mb4'REEVALUATING',_utf8mb4'REEVALUATION_FAILED',_utf8mb4'READY_TO_PUBLISH',_utf8mb4'PUBLISHING',_utf8mb4'PUBLISHED',_utf8mb4'PUBLISH_FAILED',_utf8mb4'OBSERVING',_utf8mb4'VERIFIED',_utf8mb4'INEFFECTIVE',_utf8mb4'INCONCLUSIVE',_utf8mb4'CANCELLED')))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='智能体问题从认领到线上效果验证的治理闭环';
 
 -- ----------------------------------------------------------------------------
@@ -714,6 +718,69 @@ CREATE TABLE `ai_knowledge_base_version_document` (
   UNIQUE KEY `uk_ai_kb_version_document` (`knowledge_base_version_id`,`source_id`,`external_id`),
   KEY `idx_ai_kb_version_revision` (`tenant_id`,`document_revision_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识库版本文档成员';
+
+-- ----------------------------------------------------------------------------
+-- ai_knowledge_candidate
+-- ----------------------------------------------------------------------------
+CREATE TABLE `ai_knowledge_candidate` (
+  `tenant_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  `id` char(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `question_hash` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `revision` bigint NOT NULL,
+  `status` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '当前候选处理状态',
+  PRIMARY KEY (`tenant_id`,`id`),
+  UNIQUE KEY `uk_knowledge_candidate_source` (`tenant_id`,`question_hash`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识缺口候选';
+
+-- ----------------------------------------------------------------------------
+-- ai_knowledge_candidate_binding
+-- ----------------------------------------------------------------------------
+CREATE TABLE `ai_knowledge_candidate_binding` (
+  `tenant_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  `improvement_id` bigint NOT NULL,
+  `artifact_fingerprint` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `candidate_id` char(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `candidate_revision` bigint NOT NULL,
+  `input_json` longtext COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_by` bigint NOT NULL,
+  `created_at_ms` bigint NOT NULL,
+  PRIMARY KEY (`tenant_id`,`improvement_id`,`artifact_fingerprint`),
+  KEY `idx_candidate_binding_revision` (`tenant_id`,`candidate_id`,`candidate_revision`),
+  CONSTRAINT `chk_knowledge_binding_json` CHECK (json_valid(`input_json`))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='改进记录引用的知识候选输入';
+
+-- ----------------------------------------------------------------------------
+-- ai_knowledge_candidate_evaluation
+-- ----------------------------------------------------------------------------
+CREATE TABLE `ai_knowledge_candidate_evaluation` (
+  `tenant_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  `run_id` char(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `improvement_id` bigint NOT NULL,
+  `artifact_fingerprint` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `evaluation_json` longtext COLLATE utf8mb4_unicode_ci NOT NULL,
+  `content_hash` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `created_at_ms` bigint NOT NULL,
+  PRIMARY KEY (`tenant_id`,`run_id`),
+  KEY `idx_candidate_eval_binding` (`tenant_id`,`improvement_id`,`artifact_fingerprint`,`created_at_ms`),
+  CONSTRAINT `chk_knowledge_evaluation_json` CHECK (json_valid(`evaluation_json`))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识候选基线与实际评测事实';
+
+-- ----------------------------------------------------------------------------
+-- ai_knowledge_candidate_revision
+-- ----------------------------------------------------------------------------
+CREATE TABLE `ai_knowledge_candidate_revision` (
+  `tenant_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  `candidate_id` char(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `revision` bigint NOT NULL,
+  `source_review_revision` bigint NOT NULL COMMENT '保存时已核对的人工分类修订',
+  `title` varchar(200) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `content` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `keyword` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `content_hash` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `edited_by` bigint NOT NULL COMMENT '实际登录操作人',
+  `edited_at_ms` bigint NOT NULL,
+  PRIMARY KEY (`tenant_id`,`candidate_id`,`revision`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识候选不可变修订';
 
 -- ----------------------------------------------------------------------------
 -- ai_knowledge_document

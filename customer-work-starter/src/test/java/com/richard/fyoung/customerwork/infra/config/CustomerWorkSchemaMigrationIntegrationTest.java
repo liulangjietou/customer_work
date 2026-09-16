@@ -5,6 +5,9 @@ import com.richard.fyoung.customerwork.infra.migration.V9__AddAuditTimestamps;
 import com.zaxxer.hikari.HikariDataSource;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
@@ -52,10 +55,10 @@ class CustomerWorkSchemaMigrationIntegrationTest {
     private static final String USERNAME = System.getenv().getOrDefault("MYSQL_USERNAME", "root");
     private static final String PASSWORD = System.getenv().getOrDefault("MYSQL_PASSWORD", "root");
     private static final String DEFAULT_TENANT = "default";
-    private static final int CURRENT_SCHEMA_VERSION = 28;
+    private static final int CURRENT_SCHEMA_VERSION = 29;
     /** 两库 CREATE DATABASE 声明的排序规则，V22 起全部 cw_* 表对齐于此。 */
     private static final String TARGET_COLLATION = "utf8mb4_unicode_ci";
-    private static final int CURRENT_BUSINESS_TABLE_COUNT = 50;
+    private static final int CURRENT_BUSINESS_TABLE_COUNT = 52;
     private static final List<String> AUDIT_TIMESTAMP_TABLES = List.of(
         "cw_slot_filling_progress", "cw_dialog_stage", "cw_agent_call_segment", "cw_product",
         "cw_member", "cw_knowledge", "cw_fact_log", "cw_prompt_version", "cw_csat_survey",
@@ -77,6 +80,29 @@ class CustomerWorkSchemaMigrationIntegrationTest {
         "cw_user", "cw_knowledge", "cw_sensitive_word", "cw_rate_limit_rule", "cw_dict_type",
         "cw_dict_item", "cw_tenant_quota", "cw_long_term_memory", "cw_harness_memory", "cw_skill",
         "cw_eval_case", "cw_knowledge_gap", "cw_subject_quota_level");
+
+    @ParameterizedTest
+    @ValueSource(strings = {"none", "cw_knowledge_publication", "cw_knowledge_publication_lock"})
+    void v29AdoptsCompleteMirrorOrFinishesAnInterruptedTwoTableImport(String missingTable) throws Exception {
+        assumeTrue(reachable(), "MySQL 不可达，跳过知识发布镜像测试");
+        String database = "cw_publication_v29_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        assumeTrue(canCreateDatabases(database), "MySQL 测试账号无建库权限，跳过");
+        try (HikariDataSource dataSource = dataSource(database, "publication-mirror-test")) {
+            migrateTo(dataSource, "29");
+            execute(dataSource, "INSERT INTO cw_knowledge(id,tenant_id,title,content,keyword) "
+                + "VALUES(777,'TenantA','历史 FAQ','保留正文','历史关键词')");
+            // DBA 镜像没有 Flyway 历史；两表导入中断时也不能要求清库重来。
+            execute(dataSource, "DROP TABLE flyway_schema_history");
+            if (!"none".equals(missingTable)) execute(dataSource, "DROP TABLE " + missingTable);
+            assertDoesNotThrow(() -> migrate(dataSource, database));
+            assertDoesNotThrow(() -> migrate(dataSource, database));
+            assertEquals("29", latestHistoryVersion(dataSource));
+            assertEquals("保留正文", queryString(dataSource, "SELECT content FROM cw_knowledge WHERE id=777"));
+            assertEquals("utf8mb4_bin", queryString(dataSource, "SELECT collation_name FROM information_schema.columns "
+                + "WHERE table_schema=DATABASE() AND table_name='cw_knowledge_publication' AND column_name='tenant_id'"));
+            assertEquals("none".equals(missingTable) ? 1 : 2, countHistoryRows(dataSource));
+        } finally { dropDatabase(database); }
+    }
 
     @Test
     void v28ShouldCompletePartialUpgradeAndBlockOldPublicProjections() throws Exception {
@@ -791,6 +817,18 @@ class CustomerWorkSchemaMigrationIntegrationTest {
                 + "FROM information_schema.columns WHERE table_schema = DATABASE() "
                 + "AND table_name LIKE 'cw\\_%' AND collation_name IS NOT NULL "
                 + "AND collation_name <> ?");
+        // 发布身份是区分大小写的独立键，存储按二进制精确定位；其它业务关联列仍要求统一排序规则。
+        Set<String> publicationIdentifiers = Set.of(
+            "cw_knowledge_publication.tenant_id(列)=utf8mb4_bin",
+            "cw_knowledge_publication_lock.tenant_id(列)=utf8mb4_bin",
+            "cw_knowledge_publication.task_id(列)=ascii_bin",
+            "cw_knowledge_publication.candidate_id(列)=ascii_bin",
+            "cw_knowledge_publication.artifact_fingerprint(列)=ascii_bin",
+            "cw_knowledge_publication.evaluation_run_id(列)=ascii_bin",
+            "cw_knowledge_publication.question_hash(列)=ascii_bin",
+            "cw_knowledge_publication.command_fingerprint(列)=ascii_bin");
+        assertTrue(offenders.containsAll(publicationIdentifiers), "发布身份列必须全部保留精确比较规则");
+        offenders.removeAll(publicationIdentifiers);
         assertTrue(offenders.isEmpty(), scope + "后仍有对象不是 " + TARGET_COLLATION
             + "，跨表比较字符串列时会炸 1267：" + offenders);
     }

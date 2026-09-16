@@ -17,14 +17,16 @@ import type { EvalTypeCode } from '@/api/eval'
 import { getRequestErrorMessage } from '@/api/request'
 import { useAuthStore } from '@/store/auth'
 import CrudLoadState from './CrudLoadState.vue'
+import KnowledgeCandidateEvaluationPanel from './KnowledgeCandidateEvaluationPanel.vue'
 
 const props = withDefaults(
   defineProps<{
     sourceType: ImprovementSourceType
     sourceKey: string
     active?: boolean
+    knowledgeMode?: boolean
   }>(),
-  { active: true },
+  { active: true, knowledgeMode: false },
 )
 
 const compactQuery = window.matchMedia('(max-width: 640px)')
@@ -45,7 +47,9 @@ const needsReconciliation = ref(false)
 let generation = 0
 const loading = ref(false)
 const submitting = ref(false)
+const knowledgeBusy = ref(false)
 const improvement = ref<ImprovementCase | null>(null)
+const knowledgeMode = computed(() => props.knowledgeMode || improvement.value?.artifactType === 'KNOWLEDGE_CANDIDATE')
 const ownerId = ref('')
 const slaDueAtMs = ref(Date.now() + 24 * 60 * 60 * 1000)
 const artifactForm = reactive({
@@ -60,7 +64,7 @@ const evalCaseForm = reactive({
   category: '',
 })
 const reevaluationRemark = ref('')
-const busy = computed(() => loading.value || submitting.value)
+const busy = computed(() => loading.value || submitting.value || knowledgeBusy.value)
 const canAct = computed(
   () =>
     active.value && loaded.value && !busy.value && !loadError.value && !needsReconciliation.value,
@@ -85,6 +89,7 @@ const STATUS_LABELS: Record<ImprovementCaseStatus, string> = {
   REEVALUATION_FAILED: '复评未通过',
   READY_TO_PUBLISH: '待发布',
   PUBLISHING: '发布中',
+  PUBLISHED: '知识已发布',
   PUBLISH_FAILED: '发布失败',
   OBSERVING: '效果观察中',
   VERIFIED: '效果已验证',
@@ -114,7 +119,7 @@ const publishStatusLabel = computed(() => {
 
 const statusType = computed(() => {
   const status = improvement.value?.status
-  if (status === 'VERIFIED') return 'success'
+  if (status === 'VERIFIED' || status === 'PUBLISHED') return 'success'
   if (status === 'INEFFECTIVE' || status === 'PUBLISH_FAILED' || status === 'REEVALUATION_FAILED')
     return 'danger'
   if (status === 'INCONCLUSIVE') return 'warning'
@@ -125,7 +130,7 @@ const canBind = computed(() => {
   const status = improvement.value?.status
   return (
     !!status &&
-    !['REEVALUATING', 'PUBLISHING', 'OBSERVING', 'VERIFIED', 'CANCELLED'].includes(status)
+    !['REEVALUATING', 'PUBLISHING', 'PUBLISHED', 'OBSERVING', 'VERIFIED', 'CANCELLED'].includes(status)
   )
 })
 
@@ -153,6 +158,7 @@ function reset() {
   loaded.value = false
   loading.value = false
   submitting.value = false
+  knowledgeBusy.value = false
   improvement.value = null
   loadError.value = null
   actionError.value = ''
@@ -299,7 +305,7 @@ function submitRefresh() {
 }
 
 watch(
-  () => [props.sourceType, props.sourceKey, active.value, auth.token],
+  () => [props.sourceType, props.sourceKey, active.value, auth.loginGeneration],
   () => {
     reset()
     void load()
@@ -318,7 +324,7 @@ onScopeDispose(() => {
       show-icon
       :closable="false"
       title="从原始问题到上线验证"
-      description="认领后建立回归用例，绑定修复候选并运行复评。所有目标渠道确认生效后进入效果观察；达到样本要求且未超过复发阈值，才标记效果已验证。"
+      :description="knowledgeMode ? '认领原始问题，保存知识候选后，使用已审核用例对照补充前后的答复。评测通过仅表示可以继续申请知识发布。' : '认领后建立回归用例，绑定修复候选并运行复评。所有目标渠道确认生效后进入效果观察；达到样本要求且未超过复发阈值，才标记效果已验证。'"
     />
 
     <CrudLoadState :error="loadError" :has-stale-data="loaded" :loading="loading" @retry="load" />
@@ -447,7 +453,7 @@ onScopeDispose(() => {
         <template #header>建立目标回归用例</template>
         <el-form :model="evalCaseForm" label-width="88px" :disabled="!canAct">
           <el-form-item label="用例编号"><el-input v-model="evalCaseForm.caseId" /></el-form-item>
-          <el-form-item label="类型">
+          <el-form-item v-if="!knowledgeMode" label="类型">
             <el-radio-group v-model="evalCaseForm.evalType">
               <el-radio-button value="INTENT">意图</el-radio-button>
               <el-radio-button value="QUALITY">质量</el-radio-button>
@@ -467,7 +473,17 @@ onScopeDispose(() => {
         </el-form>
       </el-card>
 
-      <el-card v-if="canBind" shadow="never" class="section">
+      <KnowledgeCandidateEvaluationPanel
+        v-if="knowledgeMode"
+        :improvement="improvement"
+        :source-key="sourceKey"
+        :active="active"
+        :disabled="loading || submitting || !!loadError || needsReconciliation"
+        @result="applyResult"
+        @busy="knowledgeBusy = $event"
+      />
+
+      <el-card v-if="canBind && !knowledgeMode" shadow="never" class="section">
         <template #header>绑定修复候选</template>
         <el-alert
           v-if="candidateChanged"
@@ -502,7 +518,7 @@ onScopeDispose(() => {
         </el-form>
       </el-card>
 
-      <div class="actions section">
+      <div v-if="!knowledgeMode" class="actions section">
         <el-input
           :disabled="!canAct"
           v-model="reevaluationRemark"

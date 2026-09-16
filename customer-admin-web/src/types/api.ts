@@ -349,8 +349,8 @@ export interface AiCodingAuditQuery extends PageQuery {
 
 /** 调用来源：ADMIN=后台工作台（客服坐席/内部使用），APP=客服端 H5（面向终端用户）。 */
 export type AgentCallSource = 'ADMIN' | 'APP'
-/** 会话类型：CHAT=普通对话，VIBE_CODING=编码协作。APP 来源恒为 CHAT。 */
-export type AgentCallSessionType = 'CHAT' | 'VIBE_CODING'
+/** 会话类型：CHAT=普通对话，VIBE_CODING=编码协作，EVALUATION=离线评测。APP 来源恒为 CHAT。 */
+export type AgentCallSessionType = 'CHAT' | 'VIBE_CODING' | 'EVALUATION'
 /** 单次调用内的分段耗时类型：大模型/工具/MCP/技能。 */
 export type AgentCallSegmentKind = 'MODEL' | 'TOOL' | 'MCP' | 'SKILL'
 /** 趋势图统计粒度。 */

@@ -171,8 +171,15 @@ public class AdminModelFactory {
      */
     public Model buildModel(String provider, String baseUrl, String apiKey,
                             String modelName, Long deploymentId) {
-        Model model = buildModelWithWindow(provider, baseUrl, apiKey, modelName,
+        return buildModel(provider, baseUrl, apiKey, modelName, deploymentId,
             resolveDeclaredContextWindow(deploymentId));
+    }
+
+    /** 按已经冻结的部署参数和上下文窗口建模，评测期间不再重新读取可编辑配置。 */
+    public Model buildModel(String provider, String baseUrl, String apiKey,
+                            String modelName, Long deploymentId, Integer contextWindowSize) {
+        Model model = buildModelWithWindow(provider, baseUrl, apiKey, modelName,
+            contextWindowSize);
         ModelCallAttribution attribution = modelPriceService == null
             ? ModelCallAttribution.unpriced(provider, deploymentId, modelName)
             : modelPriceService.attribution(provider, deploymentId, modelName);

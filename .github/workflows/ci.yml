@@ -161,6 +161,14 @@ jobs:
         working-directory: ${{ matrix.project }}
         run: npm ci
 
+      # Chrome 自带不代表中文字库也存在；缺字会把截图变成方框并改变实际布局测量。
+      - name: Install Chinese fonts for browser acceptance
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+          test -n "$(fc-list :lang=zh-cn file)"
+          fc-match -f '%{family}\n' 'sans-serif:lang=zh-cn'
+
       - name: Run frontend tests
         working-directory: ${{ matrix.project }}
         run: npm test

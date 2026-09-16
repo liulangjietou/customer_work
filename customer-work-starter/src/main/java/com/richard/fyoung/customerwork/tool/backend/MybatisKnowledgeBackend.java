@@ -1,13 +1,10 @@
 package com.richard.fyoung.customerwork.tool.backend;
 
-import com.richard.fyoung.customerwork.tool.backend.entity.KnowledgeDO;
 import com.richard.fyoung.customerwork.tool.backend.mapper.KnowledgeMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Mono;
 
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * 知识库后端的 MyBatis-Plus 实现：FAQ 条目落库到 {@code cw_knowledge}，检索用 LIKE 关键词匹配
@@ -35,15 +32,7 @@ public class MybatisKnowledgeBackend implements KnowledgeBackend {
 
     private String doSearch(String query) {
         try {
-            List<KnowledgeDO> entries = knowledgeMapper.search(query);
-            List<String> hits = new ArrayList<>();
-            for (KnowledgeDO entry : entries) {
-                hits.add("· " + entry.getContent() + "（来源：" + entry.getSource() + "）");
-            }
-            if (hits.isEmpty()) {
-                return NO_HIT_REPLY;
-            }
-            return "知识库召回如下：\n" + String.join("\n", hits);
+            return KnowledgeRecallFormatter.format(knowledgeMapper.search(query));
         } catch (Exception e) {
             log.error("knowledge search failed, code={}, query={}", "KNOWLEDGE-BACKEND-SEARCH-FAIL", query, e);
             return "知识库检索暂时不可用。";

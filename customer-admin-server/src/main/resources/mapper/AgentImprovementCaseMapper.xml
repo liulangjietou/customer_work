@@ -3,14 +3,14 @@
 <mapper namespace="com.richard.fyoung.customeradmin.improvement.mapper.AgentImprovementCaseMapper">
 
     <select id="lockById" resultType="com.richard.fyoung.customeradmin.improvement.entity.AgentImprovementCase">
-        SELECT * FROM ai_agent_improvement_case WHERE id = #{id} FOR UPDATE
+        SELECT * FROM ai_agent_improvement_case WHERE id = #{id} AND BINARY tenant_id = BINARY #{tenantId} FOR UPDATE
     </select>
 
     <select id="findDueCandidates"
             resultType="com.richard.fyoung.customeradmin.improvement.entity.AgentImprovementCase">
         SELECT *
         FROM ai_agent_improvement_case
-        WHERE status IN ('PUBLISHING', 'OBSERVING')
+        WHERE status IN ('PUBLISHING', 'OBSERVING', 'REEVALUATING')
           AND next_action_at_ms &lt;= #{nowMs}
           AND (lease_until_ms IS NULL OR lease_until_ms &lt; #{nowMs})
         ORDER BY next_action_at_ms, id
@@ -21,7 +21,7 @@
         UPDATE ai_agent_improvement_case
         SET lease_owner = #{owner}, lease_until_ms = #{leaseUntilMs}, updated_at_ms = #{nowMs}
         WHERE id = #{id}
-          AND status IN ('PUBLISHING', 'OBSERVING')
+          AND status IN ('PUBLISHING', 'OBSERVING', 'REEVALUATING')
           AND next_action_at_ms &lt;= #{nowMs}
           AND (lease_until_ms IS NULL OR lease_until_ms &lt; #{nowMs})
     </update>

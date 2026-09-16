@@ -17,6 +17,7 @@ import type {
   AgentCallReplayManifest,
   AgentReplayExecution,
   AgentCallSource,
+  AgentCallSessionType,
   AgentCallStatsDetail,
   AgentCallStatsQuery,
   AgentCallStatsRow,
@@ -37,9 +38,10 @@ const SOURCE_OPTIONS: Array<{ label: string; value: AgentCallSource }> = [
   { label: '工作台（Admin）', value: 'ADMIN' },
   { label: '客服端（App）', value: 'APP' },
 ]
-const SESSION_TYPE_OPTIONS: Array<{ label: string; value: 'CHAT' | 'VIBE_CODING' }> = [
+const SESSION_TYPE_OPTIONS: Array<{ label: string; value: AgentCallSessionType }> = [
   { label: '对话', value: 'CHAT' },
   { label: 'VibeCoding', value: 'VIBE_CODING' },
+  { label: '离线评测', value: 'EVALUATION' },
 ]
 
 /** 分段耗时类型元信息：展示名 + 统一配色，明细表迷你条形图与详情抽屉标签共用。 */
@@ -58,7 +60,7 @@ interface FilterState {
   source: AgentCallSource
   username: string
   agentCode: string
-  sessionType: 'CHAT' | 'VIBE_CODING' | ''
+  sessionType: AgentCallSessionType | ''
   requestId: string
   sessionId: string
   traceId: string
@@ -279,7 +281,7 @@ function costTagType(status: string | null | undefined) {
 }
 
 function sessionTypeLabel(type: string): string {
-  return type === 'VIBE_CODING' ? 'VibeCoding' : '对话'
+  return SESSION_TYPE_OPTIONS.find(option => option.value === type)?.label ?? type
 }
 
 /** 明细行的分段耗时迷你条形展示：按各段耗时占比拉伸宽度，全零时不渲染任何条。 */
@@ -391,6 +393,7 @@ function segmentWidthPercent(seg: AgentCallStatsSegment): number {
 
 // ---------- 行操作：打开会话 ----------
 function openInWorkspace(row: AgentCallStatsRow) {
+  if (row.sessionType !== 'CHAT' && row.sessionType !== 'VIBE_CODING') return
   router.push({
     name: 'Workspace',
     params: { agentCode: row.agentCode },
@@ -584,7 +587,7 @@ onMounted(() => {
           <template #default="{ row }: { row: AgentCallStatsRow }">
             <el-button link type="primary" @click="openDetail(row)">耗时详情</el-button>
             <el-button link type="primary" @click="openReplayManifest(row)">重放清单</el-button>
-            <el-button v-if="filters.source === 'ADMIN'" link type="primary" @click="openInWorkspace(row)">打开会话</el-button>
+            <el-button v-if="filters.source === 'ADMIN' && (row.sessionType === 'CHAT' || row.sessionType === 'VIBE_CODING')" link type="primary" @click="openInWorkspace(row)">打开会话</el-button>
             <!-- 删除仅 ADMIN 行可用：APP 是客服端运行库，写入方是 8080 那条链路，后台只查不写。
                  后端 AgentCallStatsService#delete 与只读连接池各有一道防线，这里只是不给出无效按钮 -->
             <el-button v-if="!sourceIsApp" link type="danger" @click="handleDelete(row)">删除</el-button>

@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
@@ -29,6 +30,7 @@ import reactor.core.publisher.Flux;
 public class WorkspaceMessageAcceptanceService {
     private static final Logger log = LoggerFactory.getLogger(WorkspaceMessageAcceptanceService.class);
     private static final String ERROR_RECEIPT_SAVE = "WORKSPACE-RECEIPT-SAVE-FAIL";
+    private static final int ACCEPTANCE_MAX_ATTEMPTS = 3;
     private final WorkspaceMessageReceiptStore store;
     private final AdminTenantProperties tenantProperties;
 
@@ -45,7 +47,7 @@ public class WorkspaceMessageAcceptanceService {
         }
         WorkspaceMessageScope scope = scope(agentCode, request.sessionId(), ownerId, channel, request.clientMessageId());
         String fingerprint = fingerprint(request);
-        boolean first = store.accept(scope, fingerprint, System.currentTimeMillis());
+        boolean first = accept(scope, fingerprint);
         ChatReceipt receipt = store.require(scope, fingerprint);
         if (!first) {
             return replay(receipt);
@@ -86,6 +88,24 @@ public class WorkspaceMessageAcceptanceService {
     public ChatReceipt receipt(String agentCode, String sessionId, long ownerId, String channel, String clientMessageId) {
         return store.find(scope(agentCode, sessionId, ownerId, channel, clientMessageId))
             .orElseThrow(() -> new BizException(ResultCode.RESOURCE_NOT_FOUND, "消息受理记录不存在"));
+    }
+
+    /**
+     * 唯一键竞争也可能选中当前插入为死锁牺牲者。必须在 Store 的独立事务回滚后再重试，
+     * 不能在同一事务内循环，也不能重试包含模型或业务工具的执行流。
+     */
+    private boolean accept(WorkspaceMessageScope scope, String fingerprint) {
+        long acceptedAt = System.currentTimeMillis();
+        int attempt = 1;
+        while (true) {
+            try {
+                return store.accept(scope, fingerprint, acceptedAt);
+            } catch (CannotAcquireLockException contention) {
+                if (attempt++ >= ACCEPTANCE_MAX_ATTEMPTS) {
+                    throw contention;
+                }
+            }
+        }
     }
 
     private WorkspaceMessageScope scope(String agentCode, String sessionId, long ownerId, String channel, String clientMessageId) {

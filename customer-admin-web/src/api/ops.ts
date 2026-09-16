@@ -181,13 +181,6 @@ export interface KnowledgeGap {
   classification?: KnowledgeGapClassification
 }
 
-export interface FillKnowledgeGapRequest {
-  questionHash: string
-  title: string
-  content: string
-  keyword: string
-}
-
 export function listKnowledgeGaps(scopeId?: string, limit = 50, view?: KnowledgeGapView) {
   return request<KnowledgeGap[]>({
     url: '/ops/knowledge-gap/top',
@@ -216,15 +209,6 @@ export function saveKnowledgeGapReview(questionHash: string, data: KnowledgeGapR
   })
 }
 
-/** 一键补知识，返回新建的知识条目 ID。 */
-export function fillKnowledgeGap(data: FillKnowledgeGapRequest) {
-  return request<number>({
-    url: '/ops/knowledge-gap/fill',
-    method: 'post',
-    data,
-    suppressErrorMessage: true,
-  })
-}
 
 // ---------- 死信队列 ----------
 

@@ -4,7 +4,7 @@
 -- 生成方式：scripts/export-schema-snapshot.sh
 --           新建临时空库执行 classpath:db/customerwork/migration 的全部迁移
 --           （含 V2/V9 两个 Java 迁移）后逐表导出，自增当前值已抹除。
--- 对应版本：Flyway V28
+-- 对应版本：Flyway V29
 -- 真源：customer-work-starter/src/main/resources/db/customerwork/migration/
 --       + com.richard.fyoung.customerwork.infra.migration 下的 Java 迁移。
 --       改结构一律新增迁移，改本文件不会生效。
@@ -593,6 +593,40 @@ CREATE TABLE `cw_knowledge_gap_review` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_gap_review` (`tenant_id`,`scope_id`,`question_hash`,`revision`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识缺口人工复核流水';
+
+-- ----------------------------------------------------------------------------
+-- cw_knowledge_publication
+-- ----------------------------------------------------------------------------
+CREATE TABLE `cw_knowledge_publication` (
+  `tenant_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  `task_id` char(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `improvement_id` bigint NOT NULL,
+  `candidate_id` char(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `candidate_revision` bigint NOT NULL,
+  `artifact_fingerprint` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `evaluation_run_id` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `question_hash` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `source_review_revision` bigint NOT NULL,
+  `command_fingerprint` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `knowledge_id` bigint NOT NULL,
+  `requested_by` bigint NOT NULL,
+  `published_at_ms` bigint NOT NULL,
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '记录创建时间',
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '记录最后修改时间',
+  PRIMARY KEY (`tenant_id`,`task_id`),
+  UNIQUE KEY `uk_knowledge_publication_candidate` (`tenant_id`,`candidate_id`,`candidate_revision`),
+  UNIQUE KEY `uk_knowledge_publication_faq` (`knowledge_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识候选正式发布回执';
+
+-- ----------------------------------------------------------------------------
+-- cw_knowledge_publication_lock
+-- ----------------------------------------------------------------------------
+CREATE TABLE `cw_knowledge_publication_lock` (
+  `tenant_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '记录创建时间',
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '记录最后修改时间',
+  PRIMARY KEY (`tenant_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识候选发布租户串行锁';
 
 -- ----------------------------------------------------------------------------
 -- cw_knowledge_version

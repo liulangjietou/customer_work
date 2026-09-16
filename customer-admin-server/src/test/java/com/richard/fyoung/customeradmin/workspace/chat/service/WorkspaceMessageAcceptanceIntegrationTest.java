@@ -27,16 +27,19 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import reactor.core.publisher.Flux;
@@ -54,6 +57,7 @@ class WorkspaceMessageAcceptanceIntegrationTest {
     private static final Duration TIMEOUT = Duration.ofSeconds(10);
     private final String database = "admin_receipt_" + UUID.randomUUID().toString().replace("-", "");
     private final AtomicInteger executions = new AtomicInteger();
+    private final AtomicBoolean rollbackNextAcceptance = new AtomicBoolean();
     private boolean created;
     private HikariDataSource dataSource;
     private JdbcTemplate jdbc;
@@ -88,7 +92,8 @@ class WorkspaceMessageAcceptanceIntegrationTest {
             definition -> definition.setDestroyMethodName(""));
         transactionManager = new org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSource);
         context.registerBean(org.springframework.transaction.PlatformTransactionManager.class, () -> transactionManager);
-        context.registerBean(WorkspaceMessageReceiptStore.class);
+        context.registerBean(WorkspaceMessageReceiptStore.class,
+            () -> new RollbackAfterInsertStore(dataSource, rollbackNextAcceptance));
         context.register(TransactionConfiguration.class);
         context.refresh();
         service = new WorkspaceMessageAcceptanceService(context.getBean(WorkspaceMessageReceiptStore.class), properties);
@@ -99,6 +104,7 @@ class WorkspaceMessageAcceptanceIntegrationTest {
         jdbc.update("DELETE FROM ai_workspace_message_receipt");
         TenantContext.set(TENANT);
         executions.set(0);
+        rollbackNextAcceptance.set(false);
     }
 
     @AfterEach
@@ -155,6 +161,16 @@ class WorkspaceMessageAcceptanceIntegrationTest {
     }
 
     @Test
+    void rolledBackAcceptanceRestartsItsTransactionBeforeConstructingTheModel() {
+        rollbackNextAcceptance.set(true);
+        var output = service.execute(AGENT, 42, "chat", request(), this::execution).collectList().block(TIMEOUT);
+        assertEquals(ChatNodeKind.ACCEPTED, output.get(0).kind());
+        assertEquals(ChatMessagePhase.FINAL, output.get(output.size() - 1).terminal().phase());
+        assertEquals(1, executions.get());
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM ai_workspace_message_receipt", Integer.class));
+    }
+
+    @RepeatedTest(10)
     void simultaneousDuplicateRequestsHaveOneExecutionWinner() throws Exception {
         var executor = Executors.newFixedThreadPool(6);
         var ready = new CountDownLatch(6);
@@ -263,6 +279,29 @@ class WorkspaceMessageAcceptanceIntegrationTest {
     @org.springframework.context.annotation.Configuration(proxyBeanMethods = false)
     @org.springframework.transaction.annotation.EnableTransactionManagement(proxyTargetClass = true)
     static class TransactionConfiguration { }
+
+    /** 在真实插入之后模拟数据库选中本事务为死锁牺牲者，验证重试跨过了事务回滚边界。 */
+    static class RollbackAfterInsertStore extends WorkspaceMessageReceiptStore {
+        private final AtomicBoolean rollbackNext;
+
+        RollbackAfterInsertStore(javax.sql.DataSource dataSource, AtomicBoolean rollbackNext) {
+            super(dataSource);
+            this.rollbackNext = rollbackNext;
+        }
+
+        @Override
+        @org.springframework.transaction.annotation.Transactional(
+            propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+        public boolean accept(
+            com.richard.fyoung.customeradmin.workspace.chat.entity.WorkspaceMessageScope scope,
+            String fingerprint, long now) {
+            boolean first = super.accept(scope, fingerprint, now);
+            if (rollbackNext.compareAndSet(true, false)) {
+                throw new CannotAcquireLockException("injected transaction rollback after receipt insertion");
+            }
+            return first;
+        }
+    }
 
     private String url(String schema) {
         return "jdbc:mysql://" + HOST + ":" + PORT + "/" + schema

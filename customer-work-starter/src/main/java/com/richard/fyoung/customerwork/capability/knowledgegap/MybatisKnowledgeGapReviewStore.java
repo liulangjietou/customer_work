@@ -26,15 +26,15 @@ public class MybatisKnowledgeGapReviewStore {
 
     /** 查询授权分区内的原始问题，缺失时返回空。 */
     public Optional<KnowledgeGap> find(String scopeId, String questionHash) {
-        TenantContext.require();
-        return Optional.ofNullable(gapMapper.selectByHash(scopeId, questionHash))
+        String tenantId = TenantContext.require();
+        return Optional.ofNullable(gapMapper.selectByHash(tenantId, scopeId, questionHash))
             .map(MybatisKnowledgeGapStore::toDomain);
     }
 
     /** 历史只读且分页，不因当前分类被改动而覆盖此前理由。 */
     public List<KnowledgeGapReview> history(String scopeId, String questionHash, long beforeRevision) {
-        TenantContext.require();
-        return reviewMapper.history(scopeId, questionHash, beforeRevision).stream().map(row ->
+        String tenantId = TenantContext.require();
+        return reviewMapper.history(tenantId, scopeId, questionHash, beforeRevision).stream().map(row ->
             new KnowledgeGapReview(row.getRevision(), KnowledgeGapCategory.valueOf(row.getPreviousCategory()),
                 KnowledgeGapPriority.valueOf(row.getPreviousPriority()), KnowledgeGapCategory.valueOf(row.getCategory()),
                 KnowledgeGapPriority.valueOf(row.getPriority()), row.getReason(), row.getReviewedBy(),
@@ -47,7 +47,7 @@ public class MybatisKnowledgeGapReviewStore {
                                 String reason, String operator) {
         String tenantId = TenantContext.require();
         return transaction.execute(status -> {
-            var row = gapMapper.selectByHash(scopeId, questionHash);
+            var row = gapMapper.selectByHash(tenantId, scopeId, questionHash);
             if (row == null) throw new NoSuchElementException("Knowledge gap not found");
             if (row.getReviewRevision() != expectedRevision) throw new KnowledgeGapReviewConflictException();
             var audit = new KnowledgeGapReviewDO();
@@ -69,7 +69,7 @@ public class MybatisKnowledgeGapReviewStore {
             row.setClassificationReason(reason);
             row.setReviewedBy(operator);
             row.setReviewedAtMs(audit.getReviewedAtMs());
-            if (gapMapper.updateClassification(row, expectedRevision) != 1) {
+            if (gapMapper.updateClassification(tenantId, row, expectedRevision) != 1) {
                 throw new KnowledgeGapReviewConflictException();
             }
             reviewMapper.insert(audit);

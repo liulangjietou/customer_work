@@ -50,6 +50,7 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
     private static final String KNOWLEDGE_GAP_REVIEW_AUDIT_MIRROR_VERSION = "26";
     private static final String CHAT_ANSWER_EVIDENCE_MIRROR_VERSION = "27";
     private static final String KNOWLEDGE_PROJECTION_ACCESS_MIRROR_VERSION = "28";
+    private static final String KNOWLEDGE_PUBLICATION_MIRROR_VERSION = "29";
 
     /** 两库 CREATE DATABASE 声明的排序规则，V22 起全部 cw_* 表对齐于此。 */
     private static final String TARGET_COLLATION = "utf8mb4_unicode_ci";
@@ -266,8 +267,12 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
                 && columnExists(connection, "cw_knowledge_chunk", "document_title")
                 && columnExists(connection, "cw_knowledge_chunk", "source_version")
                 && knowledgeProjectionIndexMatches(connection);
-            return publicProjectionMirror ? KNOWLEDGE_PROJECTION_ACCESS_MIRROR_VERSION
-                : CHAT_ANSWER_EVIDENCE_MIRROR_VERSION;
+            if (!publicProjectionMirror) return CHAT_ANSWER_EVIDENCE_MIRROR_VERSION;
+            // V29 每张表的 CREATE 是原子操作；两表均已导入才接管，否则继续补齐缺失表。
+            boolean publicationMirror = tableExists(connection, "cw_knowledge_publication_lock")
+                && tableExists(connection, "cw_knowledge_publication");
+            return publicationMirror ? KNOWLEDGE_PUBLICATION_MIRROR_VERSION
+                : KNOWLEDGE_PROJECTION_ACCESS_MIRROR_VERSION;
         }
     }
 

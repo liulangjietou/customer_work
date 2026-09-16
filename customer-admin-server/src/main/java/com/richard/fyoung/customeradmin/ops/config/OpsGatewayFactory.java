@@ -7,6 +7,8 @@ import com.richard.fyoung.customerwork.capability.csat.mapper.CsatSurveyMapper;
 import com.richard.fyoung.customerwork.capability.deadletter.MybatisDeadLetterStore;
 import com.richard.fyoung.customerwork.capability.deadletter.mapper.DeadLetterMapper;
 import com.richard.fyoung.customerwork.capability.knowledgegap.MybatisKnowledgeGapReviewStore;
+import com.richard.fyoung.customerwork.capability.knowledgegap.KnowledgePublicationStore;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customerwork.capability.knowledgegap.MybatisKnowledgeGapStore;
 import com.richard.fyoung.customerwork.capability.knowledgegap.mapper.KnowledgeGapMapper;
 import com.richard.fyoung.customerwork.capability.knowledgegap.mapper.KnowledgeGapReviewMapper;
@@ -46,6 +48,7 @@ final class OpsGatewayFactory {
             new MybatisDeadLetterStore(gateway.getMapper(DeadLetterMapper.class)),
             gateway.getMapper(KnowledgeMapper.class),
             new MybatisKnowledgeGapReviewStore(gateway.getMapper(KnowledgeGapMapper.class),
-                gateway.getMapper(KnowledgeGapReviewMapper.class), gateway.dataSource()));
+                gateway.getMapper(KnowledgeGapReviewMapper.class), gateway.dataSource()),
+            new KnowledgePublicationStore(gateway.dataSource(), new ObjectMapper()));
     }
 }

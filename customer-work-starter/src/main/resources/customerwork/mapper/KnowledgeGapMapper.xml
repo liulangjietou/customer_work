@@ -55,7 +55,8 @@
 
     <select id="selectByHash" resultType="com.richard.fyoung.customerwork.capability.knowledgegap.entity.KnowledgeGapDO">
         SELECT <include refid="columns"/> FROM cw_knowledge_gap
-        WHERE scope_id = #{scopeId} AND question_hash = #{questionHash}
+        WHERE BINARY tenant_id = BINARY #{tenantId} AND BINARY scope_id = BINARY #{scopeId}
+          AND BINARY question_hash = BINARY #{questionHash}
         LIMIT 1
     </select>
 
@@ -64,7 +65,8 @@
         SET category = #{row.category}, priority = #{row.priority}, classification_origin = 'MANUAL',
             classification_reason = #{row.classificationReason}, review_revision = review_revision + 1,
             reviewed_by = #{row.reviewedBy}, reviewed_at_ms = #{row.reviewedAtMs}
-        WHERE scope_id = #{row.scopeId} AND question_hash = #{row.questionHash}
+        WHERE BINARY tenant_id = BINARY #{tenantId} AND BINARY scope_id = BINARY #{row.scopeId}
+          AND BINARY question_hash = BINARY #{row.questionHash}
           AND review_revision = #{expectedRevision}
     </update>
 </mapper>

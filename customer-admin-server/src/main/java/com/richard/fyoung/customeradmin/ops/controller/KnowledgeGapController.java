@@ -49,13 +49,7 @@ public class KnowledgeGapController {
             : opsAdminService.topKnowledgeGaps(scopeId, limit, view));
     }
 
-    /**
-     * 一键补知识：直接往知识库 FAQ 插一条。
-     *
-     * <p>标题正文由运营填而非拿原问题照抄——用户的提问是口语化的，直接入库会污染检索质量。</p>
-     *
-     * @return 新建的知识条目 ID
-     */
+    /** 旧客户端获得明确的迁移提示；此入口不再产生正式知识。 */
     @SaCheckPermission("knowledge-gap:fill")
     @OperationLog(operation = "盲区补知识", target = "cw_knowledge")
     @PostMapping("/fill")

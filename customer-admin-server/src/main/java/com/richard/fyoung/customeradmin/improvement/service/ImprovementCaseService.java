@@ -13,6 +13,7 @@ import com.richard.fyoung.customeradmin.badcase.config.BadcaseGatewayProvider;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.eval.service.EvalAdminService;
+import com.richard.fyoung.customeradmin.eval.service.EvalDatasetAdminService;
 import com.richard.fyoung.customeradmin.improvement.config.ImprovementAutomationProperties;
 import com.richard.fyoung.customeradmin.improvement.config.ImprovementSignalGatewayProvider;
 import com.richard.fyoung.customeradmin.improvement.domain.ImprovementCaseStatus;
@@ -28,6 +29,16 @@ import com.richard.fyoung.customeradmin.improvement.entity.AgentImprovementCase;
 import com.richard.fyoung.customeradmin.improvement.jdbc.ImprovementSignalGateway;
 import com.richard.fyoung.customeradmin.improvement.jdbc.ImprovementSourceFact;
 import com.richard.fyoung.customeradmin.improvement.mapper.AgentImprovementCaseMapper;
+import com.richard.fyoung.customeradmin.ops.domain.KnowledgeCandidateBinding;
+import com.richard.fyoung.customeradmin.ops.domain.KnowledgeCandidateEvaluation;
+import com.richard.fyoung.customeradmin.ops.dto.KnowledgeCandidateBindRequest;
+import com.richard.fyoung.customeradmin.ops.dto.KnowledgeCandidateReviewVO;
+import com.richard.fyoung.customeradmin.ops.dto.KnowledgeCandidatePublishRequest;
+import com.richard.fyoung.customeradmin.ops.service.KnowledgeCandidateBindingService;
+import com.richard.fyoung.customeradmin.ops.service.KnowledgeCandidateEvaluationService;
+import com.richard.fyoung.customeradmin.ops.service.KnowledgeCandidatePublicationService;
+import com.richard.fyoung.customerwork.capability.knowledgegap.KnowledgePublicationConflictException;
+import com.richard.fyoung.customerwork.capability.knowledgegap.KnowledgePublicationReceipt;
 import com.richard.fyoung.customerwork.capability.badcase.Badcase;
 import com.richard.fyoung.customerwork.capability.eval.EvalCaseSource;
 import com.richard.fyoung.customerwork.capability.eval.EvalComparison;
@@ -46,6 +57,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * 智能体改进闭环：责任认领 → 精确候选 → 用例复评 → 可靠发布 → revision 线上观测。
@@ -66,6 +78,10 @@ public class ImprovementCaseService {
     private final AiAgentMapper agentMapper;
     private final CustomerWorkConfigPublisher publisher;
     private final EvalAdminService evalAdminService;
+    private final EvalDatasetAdminService evalDatasetAdminService;
+    private final KnowledgeCandidateBindingService knowledgeBindings;
+    private final KnowledgeCandidateEvaluationService knowledgeEvaluations;
+    private final KnowledgeCandidatePublicationService knowledgePublications;
     private final RuntimePublishTaskService publishTaskService;
     private final RuntimePublishTaskMapper publishTaskMapper;
     private final ImprovementAutomationProperties properties;
@@ -78,6 +94,10 @@ public class ImprovementCaseService {
                                   AiAgentMapper agentMapper,
                                   CustomerWorkConfigPublisher publisher,
                                   EvalAdminService evalAdminService,
+                                  EvalDatasetAdminService evalDatasetAdminService,
+                                  KnowledgeCandidateBindingService knowledgeBindings,
+                                  KnowledgeCandidateEvaluationService knowledgeEvaluations,
+                                  KnowledgeCandidatePublicationService knowledgePublications,
                                   RuntimePublishTaskService publishTaskService,
                                   RuntimePublishTaskMapper publishTaskMapper,
                                   ImprovementAutomationProperties properties,
@@ -89,6 +109,10 @@ public class ImprovementCaseService {
         this.agentMapper = agentMapper;
         this.publisher = publisher;
         this.evalAdminService = evalAdminService;
+        this.evalDatasetAdminService = evalDatasetAdminService;
+        this.knowledgeBindings = knowledgeBindings;
+        this.knowledgeEvaluations = knowledgeEvaluations;
+        this.knowledgePublications = knowledgePublications;
         this.publishTaskService = publishTaskService;
         this.publishTaskMapper = publishTaskMapper;
         this.properties = properties;
@@ -98,8 +122,9 @@ public class ImprovementCaseService {
 
     public Optional<ImprovementCaseVO> findBySource(ImprovementSourceType sourceType, String sourceKey) {
         AgentImprovementCase row = caseMapper.selectOne(new LambdaQueryWrapper<AgentImprovementCase>()
+            .apply("BINARY tenant_id = BINARY {0}", TenantContext.require())
             .eq(AgentImprovementCase::getSourceType, sourceType.name())
-            .eq(AgentImprovementCase::getSourceKey, sourceKey)
+            .apply("BINARY source_key = BINARY {0}", sourceKey)
             .last("LIMIT 1"));
         return Optional.ofNullable(row).map(this::toVO);
     }
@@ -119,8 +144,9 @@ public class ImprovementCaseService {
         ImprovementSourceFact source = requireSource(sourceType, sourceKey);
         return transactionTemplate.execute(status -> {
             AgentImprovementCase row = caseMapper.selectOne(new LambdaQueryWrapper<AgentImprovementCase>()
+                .apply("BINARY tenant_id = BINARY {0}", TenantContext.require())
                 .eq(AgentImprovementCase::getSourceType, sourceType.name())
-                .eq(AgentImprovementCase::getSourceKey, sourceKey)
+                .apply("BINARY source_key = BINARY {0}", sourceKey)
                 .last("LIMIT 1 FOR UPDATE"));
             if (row == null) {
                 row = new AgentImprovementCase();
@@ -228,34 +254,110 @@ public class ImprovementCaseService {
         });
     }
 
+    /** 知识候选使用已有改进状态机，但绑定的是冻结 FAQ 和审核用例，不借用运行配置的指纹。 */
+    public ImprovementCaseVO bindKnowledgeCandidate(Long id, KnowledgeCandidateBindRequest request, long actor) {
+        AgentImprovementCase snapshot = require(id);
+        requireKnowledgeSource(snapshot);
+        KnowledgeCandidateBinding binding = knowledgeBindings.prepare(id, snapshot.getSourceKey(), request);
+        return transactionTemplate.execute(status -> {
+            AgentImprovementCase row = lock(id);
+            requireKnowledgeSource(row);
+            if (!Objects.equals(snapshot.getSourceKey(), row.getSourceKey())) throw invalid("改进问题已变化");
+            // 响应丢失后的同版本重试只回读，不能清掉其后完成的评测或已开始的发布。
+            if (isKnowledgeCandidate(row) && Objects.equals(row.getArtifactVersion(), binding.fingerprint())
+                && bindingMatchesParent(row, binding) && statusOf(row) != ImprovementCaseStatus.PUBLISH_FAILED) return toVO(row);
+            assertBindable(row);
+            knowledgeBindings.save(binding, actor);
+            row.setAgentId(binding.agentId());
+            row.setAgentCode(binding.agentCode());
+            row.setArtifactType(KnowledgeCandidateBinding.ARTIFACT_TYPE);
+            row.setArtifactVersion(binding.fingerprint());
+            row.setCandidateVersionsJson(write(binding.versions()));
+            row.setEvalType(EvalType.QUALITY.name());
+            row.setEvalCaseId(binding.targetCaseId());
+            resetAfterArtifactChange(row);
+            row.setStatus(ImprovementCaseStatus.READY_FOR_REEVALUATION.name());
+            row.setUpdatedAtMs(System.currentTimeMillis());
+            caseMapper.updateById(row);
+            return toVO(row);
+        });
+    }
+
+    /** 只展示当前改进项引用的知识证据，不将冻结的整库正文作为 API 响应。 */
+    public KnowledgeCandidateReviewVO knowledgeCandidateReview(Long id) {
+        AgentImprovementCase row = require(id);
+        requireKnowledgeSource(row);
+        if (!isKnowledgeCandidate(row)) return null;
+        return knowledgeEvaluations.review(knowledgeBindings.require(id, row.getArtifactVersion()), row.getEvalRunId());
+    }
+
+    /** 专用入口执行候选知识对照，不调用客服端当前正式配置的全局评测。 */
+    public ImprovementCaseVO reevaluateKnowledgeCandidate(Long id, String remark) {
+        AgentImprovementCase started = startReevaluation(id, true);
+        String attemptId = started.getReevaluationAttemptId();
+        long deadlineAtMs = started.getReevaluationDeadlineAtMs();
+        try {
+            KnowledgeCandidateBinding binding = requireKnowledgeBinding(started);
+            KnowledgeCandidateEvaluation evaluation = knowledgeEvaluations.run(binding, started.getSourceKey(), remark, deadlineAtMs);
+            List<String> failures = new ArrayList<>(knowledgeEvaluations.failures(binding, evaluation));
+            try {
+                knowledgeBindings.requireCurrent(binding, started.getSourceKey());
+            } catch (BizException changed) {
+                failures.add(changed.getMessage());
+            }
+            return transactionTemplate.execute(status -> {
+                AgentImprovementCase row = lock(id);
+                requireKnowledgeSource(row);
+                requireRunningReevaluation(row, attemptId);
+                if (!Objects.equals(row.getArtifactVersion(), binding.fingerprint())) {
+                    throw invalid("复评候选已被其他操作改变");
+                }
+                knowledgeEvaluations.save(evaluation);
+                applyReevaluation(row, evaluation.comparison(), failures);
+                caseMapper.updateById(row);
+                return toVO(row);
+            });
+        } catch (RuntimeException e) {
+            markReevaluationFailed(id, attemptId, e);
+            throw e;
+        }
+    }
+
     /** 外部评测不占用 Admin 数据库事务；开始与完成分别用短事务冻结同一候选。 */
     public ImprovementCaseVO reevaluate(Long id, String remark) {
-        AgentImprovementCase started = transactionTemplate.execute(status -> {
+        AgentImprovementCase started = startReevaluation(id, false);
+        String attemptId = started.getReevaluationAttemptId();
+        try {
+            EvalComparison comparison = evalAdminService.trigger(
+                EvalType.valueOf(started.getEvalType()), remark);
+            return completeReevaluation(id, attemptId, comparison);
+        } catch (RuntimeException e) {
+            markReevaluationFailed(id, attemptId, e);
+            throw e;
+        }
+    }
+
+    private AgentImprovementCase startReevaluation(Long id, boolean knowledge) {
+        return transactionTemplate.execute(status -> {
             AgentImprovementCase row = lock(id);
+            if (knowledge != isKnowledgeCandidate(row)) throw invalid("请使用与候选制品对应的复评入口");
+            if (knowledge) requireKnowledgeSource(row);
             ImprovementCaseStatus current = statusOf(row);
             if (current != ImprovementCaseStatus.READY_FOR_REEVALUATION
                 && current != ImprovementCaseStatus.REEVALUATION_FAILED) {
                 throw invalid("当前状态不允许复评：" + current);
             }
-            row.setStatus(ImprovementCaseStatus.REEVALUATING.name());
-            row.setReevaluationStatus(ImprovementReevaluationStatus.RUNNING.name());
-            row.setReevaluationError(null);
-            row.setUpdatedAtMs(System.currentTimeMillis());
+            long now = System.currentTimeMillis();
+            row.beginReevaluation(UUID.randomUUID().toString(),
+                Math.addExact(now, Math.max(1000L, properties.getReevaluationTimeoutMs())), now);
             caseMapper.updateById(row);
             return row;
         });
-        try {
-            EvalComparison comparison = evalAdminService.trigger(
-                EvalType.valueOf(started.getEvalType()), remark);
-            return completeReevaluation(id, comparison);
-        } catch (RuntimeException e) {
-            markReevaluationFailed(id, e);
-            throw e;
-        }
     }
 
     public ImprovementCaseVO publish(Long id) {
         AgentImprovementCase snapshot = require(id);
+        if (isKnowledgeCandidate(snapshot)) throw invalid("知识候选必须使用知识发布入口");
         EvalVersionBinding currentCandidate = publisher.previewVersionBinding(snapshot.getAgentId());
         return transactionTemplate.execute(status -> {
             AgentImprovementCase row = lock(id);
@@ -268,8 +370,42 @@ public class ImprovementCaseService {
                 || !Objects.equals(row.getArtifactVersion(), fingerprint(currentCandidate))) {
                 throw invalid("Agent 候选已变化，请重新绑定制品并复评");
             }
+            requirePublishEvidence(row);
             String taskId = publishTaskService.enqueueAgent(row.getAgentId());
             row.setPublishTaskId(taskId);
+            row.setPublishStatus(RuntimePublishStatus.PENDING.name());
+            row.setStatus(ImprovementCaseStatus.PUBLISHING.name());
+            row.setEffectStatus(ImprovementEffectStatus.NOT_STARTED.name());
+            row.setNextActionAtMs(System.currentTimeMillis());
+            row.setLeaseOwner(null);
+            row.setLeaseUntilMs(0L);
+            row.setLastError(null);
+            row.setUpdatedAtMs(System.currentTimeMillis());
+            caseMapper.updateById(row);
+            return toVO(row);
+        });
+    }
+
+    /** 父记录即持久化发布意图，和候选冻结同库提交；真正 FAQ 副作用由 Worker 重放。 */
+    public ImprovementCaseVO publishKnowledgeCandidate(Long id, KnowledgeCandidatePublishRequest request, long actor) {
+        return transactionTemplate.execute(status -> {
+            AgentImprovementCase row = lock(id);
+            requireKnowledgeSource(row);
+            if (!isKnowledgeCandidate(row)) throw invalid("当前改进项没有绑定知识候选");
+            if (!Objects.equals(row.getArtifactVersion(), request.expectedArtifactFingerprint())
+                || !Objects.equals(row.getEvalRunId(), request.expectedEvaluationRunId())) {
+                throw new BizException(ResultCode.CONFIG_EDIT_CONFLICT, "候选或评测结果已变化，请重新核对待发布正文");
+            }
+            if (statusOf(row) == ImprovementCaseStatus.PUBLISHING || statusOf(row) == ImprovementCaseStatus.PUBLISHED) {
+                return toVO(row);
+            }
+            if (statusOf(row) != ImprovementCaseStatus.READY_TO_PUBLISH
+                || reevaluationOf(row) != ImprovementReevaluationStatus.PASSED) {
+                throw invalid("只有实际复评通过的知识候选才能发布");
+            }
+            knowledgePublications.reserve(requireKnowledgeBinding(row), row.getSourceKey(), row.getEvalRunId());
+            row.setPublishTaskId(UUID.randomUUID().toString());
+            row.setPublishRequestedBy(actor);
             row.setPublishStatus(RuntimePublishStatus.PENDING.name());
             row.setStatus(ImprovementCaseStatus.PUBLISHING.name());
             row.setEffectStatus(ImprovementEffectStatus.NOT_STARTED.name());
@@ -307,9 +443,17 @@ public class ImprovementCaseService {
         }
         ImprovementCaseStatus status = statusOf(row);
         if (status == ImprovementCaseStatus.PUBLISHING) {
-            refreshPublish(row);
+            if (isKnowledgeCandidate(row)) refreshKnowledgePublish(row);
+            else refreshPublish(row);
         } else if (status == ImprovementCaseStatus.OBSERVING) {
             observe(row);
+        } else if (status == ImprovementCaseStatus.REEVALUATING) {
+            long now = System.currentTimeMillis();
+            if (row.reevaluationExpired(now)) {
+                row.failReevaluation(row.getReevaluationAttemptId(), AgentImprovementCase.REEVALUATION_TIMEOUT_MESSAGE, now);
+            } else {
+                row.setNextActionAtMs(row.getReevaluationDeadlineAtMs());
+            }
         }
         row.setLeaseOwner(null);
         row.setLeaseUntilMs(0L);
@@ -340,27 +484,55 @@ public class ImprovementCaseService {
         caseMapper.updateById(row);
     }
 
-    private ImprovementCaseVO completeReevaluation(Long id, EvalComparison comparison) {
+    private ImprovementCaseVO completeReevaluation(Long id, String attemptId, EvalComparison comparison) {
         return transactionTemplate.execute(status -> {
             AgentImprovementCase row = lock(id);
-            if (statusOf(row) != ImprovementCaseStatus.REEVALUATING) {
-                throw invalid("复评候选已被其他操作改变");
-            }
+            requireRunningReevaluation(row, attemptId);
             List<String> failures = reevaluationFailures(row, comparison);
-            boolean passed = failures.isEmpty();
-            row.setEvalRunId(comparison.current().runId());
-            row.setReevaluationVerdict(comparison.verdict().name());
-            row.setReevaluationStatus((passed
-                ? ImprovementReevaluationStatus.PASSED
-                : ImprovementReevaluationStatus.FAILED).name());
-            row.setReevaluationError(passed ? null : truncate(String.join("；", failures)));
-            row.setStatus((passed
-                ? ImprovementCaseStatus.READY_TO_PUBLISH
-                : ImprovementCaseStatus.REEVALUATION_FAILED).name());
-            row.setUpdatedAtMs(System.currentTimeMillis());
+            applyReevaluation(row, comparison, failures);
             caseMapper.updateById(row);
             return toVO(row);
         });
+    }
+
+    private void applyReevaluation(AgentImprovementCase row, EvalComparison comparison, List<String> failures) {
+        boolean passed = failures.isEmpty();
+        row.setEvalRunId(comparison.current().runId());
+        row.setReevaluationVerdict(comparison.verdict().name());
+        row.setReevaluationStatus((passed ? ImprovementReevaluationStatus.PASSED : ImprovementReevaluationStatus.FAILED).name());
+        row.setReevaluationError(passed ? null : truncate(String.join("；", failures)));
+        row.setStatus((passed ? ImprovementCaseStatus.READY_TO_PUBLISH : ImprovementCaseStatus.REEVALUATION_FAILED).name());
+        row.setNextActionAtMs(NO_ACTION_AT);
+        row.setLeaseOwner(null);
+        row.setLeaseUntilMs(0L);
+        row.setUpdatedAtMs(System.currentTimeMillis());
+    }
+
+    private boolean isKnowledgeCandidate(AgentImprovementCase row) {
+        return KnowledgeCandidateBinding.ARTIFACT_TYPE.equals(row.getArtifactType());
+    }
+
+    private void requireKnowledgeSource(AgentImprovementCase row) {
+        if (!Objects.equals(TenantContext.require(), row.getTenantId())
+            || !ImprovementSourceType.KNOWLEDGE_GAP.name().equals(row.getSourceType())) {
+            throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "知识改进项不存在");
+        }
+    }
+
+    private KnowledgeCandidateBinding requireKnowledgeBinding(AgentImprovementCase row) {
+        requireKnowledgeSource(row);
+        KnowledgeCandidateBinding binding = knowledgeBindings.require(row.getId(), row.getArtifactVersion());
+        if (!bindingMatchesParent(row, binding)) {
+            throw invalid("知识回归用例或版本已变化，请重新绑定候选");
+        }
+        return binding;
+    }
+
+    private boolean bindingMatchesParent(AgentImprovementCase row, KnowledgeCandidateBinding binding) {
+        return Objects.equals(row.getEvalCaseId(), binding.targetCaseId())
+            && Objects.equals(row.getAgentId(), binding.agentId()) && Objects.equals(row.getAgentCode(), binding.agentCode())
+            && Objects.equals(readBinding(row.getCandidateVersionsJson()), binding.versions())
+            && EvalType.QUALITY.name().equals(row.getEvalType());
     }
 
     private List<String> reevaluationFailures(AgentImprovementCase row, EvalComparison comparison) {
@@ -370,6 +542,12 @@ public class ImprovementCaseService {
         }
         if (!comparison.current().gatePassed()) {
             failures.add("Judge 或评测运行不完整");
+        }
+        try {
+            evalDatasetAdminService.requireExecutedCase(comparison.current(),
+                EvalType.valueOf(row.getEvalType()), row.getEvalCaseId());
+        } catch (BizException e) {
+            failures.add(e.getMessage());
         }
         EvalVersionBinding actual = comparison.current().versionBinding();
         EvalVersionBinding candidate = readBinding(row.getCandidateVersionsJson());
@@ -388,17 +566,61 @@ public class ImprovementCaseService {
         return failures;
     }
 
-    private void markReevaluationFailed(Long id, Throwable failure) {
+    /** 历史 PASSED 标记也必须关联可核对的实际运行，不能绕过后续修正的复评门禁。 */
+    private void requirePublishEvidence(AgentImprovementCase row) {
+        if (!StringUtils.hasText(row.getEvalRunId())) {
+            throw invalid("缺少已通过的评测运行记录，请重新绑定候选并复评");
+        }
+        EvalComparison comparison = evalAdminService.comparison(row.getEvalRunId());
+        if (comparison == null || comparison.current() == null
+            || !Objects.equals(row.getEvalRunId(), comparison.current().runId())) {
+            throw invalid("评测运行记录与改进项不一致，请重新绑定候选并复评");
+        }
+        List<String> failures = reevaluationFailures(row, comparison);
+        if (!failures.isEmpty()) {
+            throw invalid("复评证据已失效，请重新绑定候选并复评：" + truncate(String.join("；", failures)));
+        }
+    }
+
+    private void requireRunningReevaluation(AgentImprovementCase row, String attemptId) {
+        if (!row.isRunningReevaluation(attemptId)) throw invalid("复评执行已被替换，请核对当前记录");
+        if (row.reevaluationExpired(System.currentTimeMillis())) throw invalid(AgentImprovementCase.REEVALUATION_TIMEOUT_MESSAGE);
+    }
+
+    private void markReevaluationFailed(Long id, String attemptId, Throwable failure) {
         transactionTemplate.executeWithoutResult(status -> {
             AgentImprovementCase row = lock(id);
-            if (statusOf(row) == ImprovementCaseStatus.REEVALUATING) {
-                row.setStatus(ImprovementCaseStatus.REEVALUATION_FAILED.name());
-                row.setReevaluationStatus(ImprovementReevaluationStatus.FAILED.name());
-                row.setReevaluationError(errorMessage(failure));
-                row.setUpdatedAtMs(System.currentTimeMillis());
+            long now = System.currentTimeMillis();
+            String error = row.reevaluationExpired(now) ? AgentImprovementCase.REEVALUATION_TIMEOUT_MESSAGE : errorMessage(failure);
+            if (row.failReevaluation(attemptId, error, now)) {
                 caseMapper.updateById(row);
             }
         });
+    }
+
+    private void refreshKnowledgePublish(AgentImprovementCase row) {
+        KnowledgeCandidateBinding binding = requireKnowledgeBinding(row);
+        if (row.getPublishRequestedBy() == null) throw new IllegalStateException("knowledge publication actor is missing");
+        KnowledgePublicationReceipt receipt;
+        try {
+            receipt = knowledgePublications.publish(binding, row.getSourceKey(), row.getEvalRunId(),
+                row.getPublishTaskId(), row.getPublishRequestedBy());
+        } catch (BizException | KnowledgePublicationConflictException conflict) {
+            knowledgePublications.finish(binding, false);
+            row.setPublishStatus(RuntimePublishStatus.FAILED.name());
+            row.setStatus(ImprovementCaseStatus.PUBLISH_FAILED.name());
+            row.setLastError(errorMessage(conflict));
+            row.setNextActionAtMs(NO_ACTION_AT);
+            return;
+        }
+        // 数据库异常不进入上面的已知失败分支，保留原意图供 Worker 核对或重放。
+        knowledgePublications.finish(binding, true);
+        row.setPublishStatus(RuntimePublishStatus.APPLIED.name());
+        row.setPublishRevision("faq/" + receipt.knowledgeId());
+        row.setPublishedAtMs(receipt.publishedAtMs());
+        row.setStatus(ImprovementCaseStatus.PUBLISHED.name());
+        row.setEffectStatus(ImprovementEffectStatus.NOT_STARTED.name());
+        row.setNextActionAtMs(NO_ACTION_AT);
     }
 
     private void refreshPublish(AgentImprovementCase row) {
@@ -502,15 +724,16 @@ public class ImprovementCaseService {
     }
 
     private AgentImprovementCase require(Long id) {
+        String tenant = TenantContext.require();
         AgentImprovementCase row = caseMapper.selectById(id);
-        if (row == null) {
+        if (row == null || !tenant.equals(row.getTenantId())) {
             throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "改进闭环不存在：" + id);
         }
         return row;
     }
 
     private AgentImprovementCase lock(Long id) {
-        AgentImprovementCase row = caseMapper.lockById(id);
+        AgentImprovementCase row = caseMapper.lockById(id, TenantContext.require());
         if (row == null) {
             throw new BizException(ResultCode.RESOURCE_NOT_FOUND, "改进闭环不存在：" + id);
         }
@@ -521,6 +744,7 @@ public class ImprovementCaseService {
         ImprovementCaseStatus status = statusOf(row);
         if (status == ImprovementCaseStatus.PUBLISHING || status == ImprovementCaseStatus.OBSERVING
             || status == ImprovementCaseStatus.REEVALUATING
+            || status == ImprovementCaseStatus.PUBLISHED
             || status == ImprovementCaseStatus.VERIFIED || status == ImprovementCaseStatus.CANCELLED) {
             throw invalid("当前状态不能更换评测用例：" + status);
         }
@@ -530,12 +754,15 @@ public class ImprovementCaseService {
         ImprovementCaseStatus status = statusOf(row);
         if (status == ImprovementCaseStatus.PUBLISHING || status == ImprovementCaseStatus.OBSERVING
             || status == ImprovementCaseStatus.REEVALUATING
+            || status == ImprovementCaseStatus.PUBLISHED
             || status == ImprovementCaseStatus.VERIFIED || status == ImprovementCaseStatus.CANCELLED) {
             throw invalid("当前状态不能绑定新候选：" + status);
         }
     }
 
     private void resetAfterEvalCaseChange(AgentImprovementCase row) {
+        row.setReevaluationAttemptId(null);
+        row.setReevaluationDeadlineAtMs(null);
         row.setEvalRunId(null);
         row.setReevaluationStatus(ImprovementReevaluationStatus.NOT_RUN.name());
         row.setReevaluationVerdict(null);
@@ -547,6 +774,8 @@ public class ImprovementCaseService {
     }
 
     private void resetAfterArtifactChange(AgentImprovementCase row) {
+        row.setReevaluationAttemptId(null);
+        row.setReevaluationDeadlineAtMs(null);
         row.setEvalRunId(null);
         row.setReevaluationStatus(ImprovementReevaluationStatus.NOT_RUN.name());
         row.setReevaluationVerdict(null);
@@ -556,6 +785,7 @@ public class ImprovementCaseService {
 
     private void resetPublishAndObservation(AgentImprovementCase row) {
         row.setPublishTaskId(null);
+        row.setPublishRequestedBy(null);
         row.setPublishRevision(null);
         row.setPublishStatus(null);
         row.setPublishedAtMs(null);
@@ -593,7 +823,8 @@ public class ImprovementCaseService {
             row.getPublishedAtMs(), row.getObservationStartedAtMs(), row.getObservationEndsAtMs(),
             row.getMinExposureCalls(), row.getMaxRecurrenceSignals(), value(row.getObservedCalls()),
             value(row.getObservedSignals()), ImprovementEffectStatus.valueOf(row.getEffectStatus()),
-            row.getLastObservedAtMs(), row.getLastError(), value(row.getCreatedAtMs()), value(row.getUpdatedAtMs()));
+            row.getLastObservedAtMs(), row.getLastError(), value(row.getCreatedAtMs()), value(row.getUpdatedAtMs()),
+            row.getReevaluationDeadlineAtMs());
     }
 
     private ImprovementCaseStatus statusOf(AgentImprovementCase row) {
