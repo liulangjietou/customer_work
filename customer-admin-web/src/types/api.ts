@@ -1724,6 +1724,29 @@ export interface ChatMessageVO {
   sessionType?: string | null
 }
 
+/** 当前消息实际检索并注入的参考；不表示模型逐条引用。 */
+export interface ChatKnowledgeSourceVO {
+  sourceId: number
+  number: number
+  status: 'AVAILABLE' | 'FORBIDDEN' | 'UNAVAILABLE' | 'EXTERNAL'
+  knowledgeBaseName: string | null
+  documentId: string | null
+  chunkId: string | null
+  score: number | null
+  document: KnowledgeVersionDocumentVO | null
+}
+
+export interface ChatKnowledgeRetrievalVO {
+  agentCode: string
+  status: 'HIT' | 'MISS' | 'SKIPPED' | 'DEGRADED'
+  sources: ChatKnowledgeSourceVO[]
+}
+
+export interface ChatKnowledgeSourcesVO {
+  status: 'RECORDED' | 'NOT_RECORDED'
+  retrievals: ChatKnowledgeRetrievalVO[]
+}
+
 export type ChatMessagePhase =
   | 'USER_INPUT'
   | 'PROCESS'

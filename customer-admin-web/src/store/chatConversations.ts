@@ -26,6 +26,10 @@ export interface ChatMessage {
   nodes: TraceNode[]
   phase?: ChatMessagePhase
   turnId?: string | null
+  /** 后端历史消息标识；传输结束与消息、来源的保存回执分别处理。 */
+  messageId?: string | null
+  historySaved?: boolean | null
+  knowledgeSourcesSaved?: boolean | null
   finishReason?: string | null
   /**
    * 这条助手消息是一次失败的结果（额度用尽、后端异常等）。

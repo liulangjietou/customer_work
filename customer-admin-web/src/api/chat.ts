@@ -2,9 +2,11 @@ import { download, request as httpRequest, requestBlob } from './request'
 import { streamSse, type SseHandlers } from '@/utils/sse'
 import type {
   ChatAttachmentResult,
+  ChatKnowledgeSourcesVO,
   ChatMessageVO,
   ChatRequest,
   ChatSessionSummary,
+  KnowledgeDocumentPreviewVO,
   PageResult,
   PlanConfirmRequest,
 } from '@/types/api'
@@ -23,12 +25,41 @@ export function listChatSessions(agentCode: string, page = 1, size = 20) {
 }
 
 export function getChatSessionMessages(agentCode: string, sessionId: string) {
-  return httpRequest<ChatMessageVO[]>({ url: `/workspace/${agentCode}/chat/sessions/${sessionId}/messages`, method: 'get' })
+  return httpRequest<ChatMessageVO[]>({
+    url: `/workspace/${agentCode}/chat/sessions/${sessionId}/messages`,
+    method: 'get',
+  })
+}
+
+/** 按已保存消息重新核对检索来源，错误由工作区原地展示。 */
+export function getChatKnowledgeSources(agentCode: string, sessionId: string, messageId: string) {
+  return httpRequest<ChatKnowledgeSourcesVO>({
+    url: `/workspace/${encodeURIComponent(agentCode)}/chat/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/sources`,
+    method: 'get',
+    suppressErrorMessage: true,
+  })
+}
+
+/** 原文只能通过该消息保存的来源索引读取，由后端重新核对访问权限。 */
+export function previewChatKnowledgeSource(
+  agentCode: string,
+  sessionId: string,
+  messageId: string,
+  sourceId: number,
+) {
+  return httpRequest<KnowledgeDocumentPreviewVO>({
+    url: `/workspace/${encodeURIComponent(agentCode)}/chat/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/sources/${sourceId}/preview`,
+    method: 'get',
+    suppressErrorMessage: true,
+  })
 }
 
 /** 安全中断该会话正在执行的流式对话（协作式中断，不保证立即生效）。 */
 export function interruptChat(agentCode: string, sessionId: string) {
-  return httpRequest<boolean>({ url: `/workspace/${agentCode}/chat/sessions/${sessionId}/interrupt`, method: 'post' })
+  return httpRequest<boolean>({
+    url: `/workspace/${agentCode}/chat/sessions/${sessionId}/interrupt`,
+    method: 'post',
+  })
 }
 
 /**
@@ -37,7 +68,12 @@ export function interruptChat(agentCode: string, sessionId: string) {
  * channel 区分调用来源：ChatPanel 传 'admin_chat'、VibeCodingPanel 传 'vibecoding'。
  * sessionId 可选（会话尚未落库前上传也允许），有则一并传给后端关联到具体会话。
  */
-export function parseChatAttachment(agentCode: string, file: File, channel: string, sessionId?: string) {
+export function parseChatAttachment(
+  agentCode: string,
+  file: File,
+  channel: string,
+  sessionId?: string,
+) {
   const formData = new FormData()
   formData.append('file', file)
   if (sessionId) {
@@ -68,7 +104,11 @@ export function fetchChatAttachmentFile(agentCode: string, attachmentId: string)
 }
 
 /** 附件下载：blob 请求 + Content-Disposition 文件名，触发浏览器保存（不走 img 内联预览路径）。 */
-export function downloadChatAttachment(agentCode: string, attachmentId: string, fallbackFilename: string) {
+export function downloadChatAttachment(
+  agentCode: string,
+  attachmentId: string,
+  fallbackFilename: string,
+) {
   return download(
     { url: `/workspace/${agentCode}/chat/attachment/${attachmentId}/file`, method: 'get' },
     fallbackFilename,

@@ -1,11 +1,26 @@
 package com.richard.fyoung.customeradmin.workspace.chat.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+
 /**
  * 本轮权威结果。historySaved 只证明本轮用户消息与主 Agent 结果已回读，
  * 不代表长期记忆、工具业务写入或编码产物已经保存；产物单独由 artifactsSaved 表示。
  */
 public record ChatTerminal(String turnId, String messageId, ChatMessagePhase phase,
-                           String finishReason, boolean historySaved, Boolean artifactsSaved, String error) {
+                           String finishReason, boolean historySaved, Boolean artifactsSaved, String error,
+                           @JsonInclude(JsonInclude.Include.NON_NULL) Boolean knowledgeSourcesSaved) {
+
+    /** 未参与来源采集的既有调用保持原协议。 */
+    public ChatTerminal(String turnId, String messageId, ChatMessagePhase phase, String finishReason,
+                        boolean historySaved, Boolean artifactsSaved, String error) {
+        this(turnId, messageId, phase, finishReason, historySaved, artifactsSaved, error, null);
+    }
+
+    /** 来源留存独立于答复和产物的完成状态。 */
+    public ChatTerminal withKnowledgeSourcesSaved(boolean saved) {
+        return new ChatTerminal(turnId, messageId, phase, finishReason, historySaved,
+            artifactsSaved, error, saved);
+    }
 
     /** 没有完成依据时如实保留未知，不能根据 EOF 或兜底文本补成成功。 */
     public static ChatTerminal unknown(String turnId) {
@@ -24,6 +39,7 @@ public record ChatTerminal(String turnId, String messageId, ChatMessagePhase pha
         return new ChatTerminal(turnId, messageId,
             !saved && phase != ChatMessagePhase.FAILED ? ChatMessagePhase.UNKNOWN : phase,
             finishReason, historySaved, saved,
-            saved ? error : error == null ? persistenceError : error + " " + persistenceError);
+            saved ? error : error == null ? persistenceError : error + " " + persistenceError,
+            knowledgeSourcesSaved);
     }
 }

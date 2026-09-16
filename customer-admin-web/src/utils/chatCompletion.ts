@@ -7,6 +7,9 @@ const TERMINAL_PHASES: ChatMessagePhase[] = ['FINAL', 'STOPPED', 'WAITING', 'FAI
 interface CompletionMessage {
   phase?: ChatMessagePhase
   turnId?: string | null
+  messageId?: string | null
+  historySaved?: boolean | null
+  knowledgeSourcesSaved?: boolean | null
   finishReason?: string | null
   failed?: boolean
   error?: string
@@ -48,6 +51,10 @@ export function createChatCompletion(message: CompletionMessage, conversation: C
         received = true
         message.phase = payload.phase as ChatMessagePhase
         message.turnId = typeof payload.turnId === 'string' ? payload.turnId : null
+        message.messageId = typeof payload.messageId === 'string' ? payload.messageId : null
+        message.historySaved = typeof payload.historySaved === 'boolean' ? payload.historySaved : null
+        message.knowledgeSourcesSaved =
+          typeof payload.knowledgeSourcesSaved === 'boolean' ? payload.knowledgeSourcesSaved : null
         message.finishReason = typeof payload.finishReason === 'string' ? payload.finishReason : null
         message.failed = message.phase === 'FAILED'
         message.error = typeof payload.error === 'string' ? payload.error : undefined

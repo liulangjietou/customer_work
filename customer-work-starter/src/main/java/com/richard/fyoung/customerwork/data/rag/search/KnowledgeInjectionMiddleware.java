@@ -131,6 +131,7 @@ public class KnowledgeInjectionMiddleware implements MiddlewareBase {
             })
             .flatMapMany(result -> {
                 String block = result.block();
+                KnowledgeRetrievalCapture.record(ctx, agentCode, result);
                 if (ctx != null) {
                     ctx.put(cacheKey, RetrievedBlock.class, new RetrievedBlock(block));
                 }

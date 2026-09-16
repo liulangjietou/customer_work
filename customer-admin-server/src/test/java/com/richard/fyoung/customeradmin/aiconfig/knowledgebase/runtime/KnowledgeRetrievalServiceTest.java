@@ -31,6 +31,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.IntStream;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
 import org.junit.jupiter.api.BeforeAll;
@@ -39,7 +40,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import reactor.core.publisher.Flux;
-
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -233,6 +233,27 @@ class KnowledgeRetrievalServiceTest {
         assertEquals(KnowledgeRetrievalResult.Status.DEGRADED, result.status());
         assertTrue(result.block().contains("可核对的退款流程"), "部分故障不能丢弃其他外部知识库的有效召回");
         assertTrue(result.block().contains("doc_id=refund"));
+    }
+
+    @Test
+    void sourcesShouldMatchOnlyTheRankedNodesActuallyInjected() {
+        bindKnowledgeBase(usableKnowledgeBase());
+        List<KnowledgeNode> nodes = IntStream.rangeClosed(1, 7).mapToObj(index ->
+            new KnowledgeNode("外部知识库", "正文-" + index, BigDecimal.valueOf(index),
+                "doc-" + index, "chunk-" + index)).toList();
+        when(searchClient.searchAllResult(anyList(), anyString()))
+            .thenReturn(new KnowledgeSearchResult(nodes, true));
+
+        KnowledgeRetrievalResult result = service.retrieveResult(AGENT_CODE, "退款流程", null);
+
+        assertEquals(List.of("doc-7", "doc-6", "doc-5", "doc-4", "doc-3"),
+            result.sources().stream().map(source -> source.documentId()).toList());
+        assertEquals(List.of(1, 2, 3, 4, 5), result.sources().stream().map(source -> source.number()).toList());
+        assertTrue(result.sources().stream().allMatch(source -> source.documentReference() == null),
+            "外部定位线索不能被包装成内部文档授权标识");
+        assertFalse(result.block().contains("doc_id=doc-2"));
+        assertFalse(result.block().contains("doc_id=doc-1"));
+        assertTrue(result.block().contains("[1] knowledge_base=外部知识库 doc_id=doc-7"));
     }
 
     /** 接起实际 HTTP 执行核心，避免只验证“客户端抛异常”的桩而漏掉内部降级。 */

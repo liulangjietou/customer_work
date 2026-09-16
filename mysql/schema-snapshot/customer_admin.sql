@@ -4,7 +4,7 @@
 -- 生成方式：scripts/export-schema-snapshot.sh
 --           新建临时空库执行 classpath:db/migration 的全部迁移后逐表导出，
 --           自增当前值已抹除。
--- 对应版本：Flyway V105
+-- 对应版本：Flyway V106
 -- 真源：customer-admin-server/src/main/resources/db/migration/
 --       改结构一律新增迁移，改本文件不会生效。
 -- 内容：全部表结构 + 迁移写入的系统种子数据（菜单权限树、角色、默认租户、admin 账号等）。
@@ -374,6 +374,23 @@ CREATE TABLE `ai_chat_attachment` (
   KEY `idx_ai_chat_attachment_tenant` (`tenant_id`),
   KEY `idx_ai_chat_attachment_create_by` (`create_by`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='对话附件（多格式解析落库）';
+
+-- ----------------------------------------------------------------------------
+-- ai_chat_knowledge_evidence
+-- ----------------------------------------------------------------------------
+CREATE TABLE `ai_chat_knowledge_evidence` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '来源记录主键',
+  `tenant_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '租户标识',
+  `state_user_id` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '权威会话存储的主体分区',
+  `agent_code` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '主智能体编码',
+  `session_id` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '工作区会话标识',
+  `turn_id` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '本轮用户消息标识',
+  `message_id` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '已确认保存的助手消息标识',
+  `retrievals` json NOT NULL COMMENT '实际检索状态与来源元数据，不含正文',
+  `created_at_ms` bigint NOT NULL COMMENT '保存时间毫秒',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_chat_knowledge_message` (`tenant_id`,`state_user_id`,`session_id`,`message_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='工作区消息检索依据';
 
 -- ----------------------------------------------------------------------------
 -- ai_chat_session_state

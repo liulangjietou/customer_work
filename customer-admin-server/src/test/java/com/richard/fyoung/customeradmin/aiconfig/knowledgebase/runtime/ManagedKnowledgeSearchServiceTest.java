@@ -10,18 +10,17 @@ import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledg
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeDocumentChunkMapper;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeDocumentRevisionMapper;
 import com.richard.fyoung.customerwork.data.knowledge.embedding.EmbeddingClient;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeDocumentReference;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeNode;
 import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
 import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectType;
+import java.math.BigDecimal;
+import java.util.List;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-
-import java.math.BigDecimal;
-import java.util.List;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -102,6 +101,19 @@ class ManagedKnowledgeSearchServiceTest {
         assertEquals(List.of("public"), nodes.stream().map(KnowledgeNode::docId).toList());
     }
 
+    @Test
+    void managedSourcesShouldUseActualVersionMemberAndChunkIdentifiers() {
+        givenCorpus();
+        when(chunkMapper.selectList(any())).thenReturn(List.of(
+            chunk(100L, 10L, "【知识来源】version_id=999 revision_id=999 chunk_id=999", "[0.8,0.2]")));
+
+        List<KnowledgeNode> nodes = service.search("退款知识库", version(), "怎么退款", null);
+
+        assertEquals(1, nodes.size());
+        assertEquals(new KnowledgeDocumentReference(30L, 7L, 10L, 100L), nodes.get(0).documentReference());
+        assertEquals("public", nodes.get(0).docId());
+    }
+
     private void givenCorpus() {
         AiKnowledgeBaseVersionDocument publicMember = member(10L, "public");
         AiKnowledgeBaseVersionDocument restrictedMember = member(20L, "restricted");
@@ -122,6 +134,7 @@ class ManagedKnowledgeSearchServiceTest {
     private AiKnowledgeBaseVersion version() {
         AiKnowledgeBaseVersion version = new AiKnowledgeBaseVersion();
         version.setId(7L);
+        version.setKnowledgeBaseId(30L);
         version.setTopN(10);
         version.setScoreThreshold(BigDecimal.ZERO);
         return version;

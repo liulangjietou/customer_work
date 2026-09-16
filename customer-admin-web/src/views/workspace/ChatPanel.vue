@@ -23,8 +23,14 @@ import AttachmentPendingList from '@/components/attachment/AttachmentPendingList
 import MessageAttachments from '@/components/attachment/MessageAttachments.vue'
 import WorkspaceConversationEmptyState from '@/components/workspace/WorkspaceConversationEmptyState.vue'
 import { useThemeStore } from '@/store/theme'
+import { useAuthStore } from '@/store/auth'
+import WorkspaceKnowledgeSourcesDrawer from './WorkspaceKnowledgeSourcesDrawer.vue'
 import '@/styles/workspace-conversation.css'
-import { useChatConversationsStore, type ChatConversation } from '@/store/chatConversations'
+import {
+  useChatConversationsStore,
+  type ChatConversation,
+  type ChatMessage,
+} from '@/store/chatConversations'
 import type { PlanCard } from '@/utils/planCard'
 
 const props = defineProps<{
@@ -68,8 +74,55 @@ onDeactivated(() => {
   viewActive.value = false
   // 抽屉挂载在 body，缓存工作区时需显式关闭，避免浏览器返回后仍遮挡其他页面。
   detailsOpen.value = false
+  closeKnowledgeSources(false)
 })
 const themeStore = useThemeStore()
+const auth = useAuthStore()
+const sourcesOpen = ref(false)
+const sourcesMessageId = ref<string | null>(null)
+let sourcesTrigger: HTMLButtonElement | null = null
+
+function sourcesStatus(message: ChatMessage, index: number) {
+  if (!message.messageId) return isStreamingMessage(index) ? '等待消息保存' : '消息标识未确认'
+  if (message.historySaved === false || message.knowledgeSourcesSaved === false) return '保存未确认'
+  return ''
+}
+function inspectSources(message: ChatMessage, event: Event) {
+  if (!message.messageId) return
+  sourcesMessageId.value = message.messageId
+  sourcesTrigger = event.currentTarget as HTMLButtonElement
+  sourcesOpen.value = true
+}
+/** 来源 GET 已重新核对权威历史消息，恢复保存确认但不改变执行阶段。 */
+function confirmSourceRecord(messageId: string) {
+  const message = active.value?.messages.find((item) => item.messageId === messageId)
+  if (!sourcesOpen.value || sourcesMessageId.value !== messageId || !message) return
+  message.historySaved = true
+  message.knowledgeSourcesSaved = true
+}
+function closeKnowledgeSources(restoreFocus = true) {
+  sourcesOpen.value = false
+  sourcesMessageId.value = null
+  if (!restoreFocus) sourcesTrigger = null
+}
+function restoreSourcesFocus() {
+  if (sourcesTrigger?.isConnected && viewActive.value && props.historyActive !== false)
+    sourcesTrigger.focus()
+  sourcesTrigger = null
+}
+// 缓存页和切 Tab 不会销毁 ChatPanel；原文只允许跟随当前可见会话和登录主体。
+watch(
+  [
+    activeSessionId,
+    () => props.historyActive,
+    () => auth.token,
+    () => auth.username,
+    () => auth.permissions,
+  ],
+  () => closeKnowledgeSources(false),
+  { flush: 'sync', deep: true },
+)
+onBeforeUnmount(() => closeKnowledgeSources(false))
 const detailsOpen = ref(false)
 const detailsMobile = ref(window.matchMedia('(max-width: 1100px)').matches)
 const selectedMessageIndex = ref(-1)
@@ -284,6 +337,19 @@ defineExpose({ newSession })
                 :plans="msg.plans"
                 @decision="handlePlanDecision"
               />
+              <div v-if="auth.hasPermission('workspace')" class="message-knowledge-sources">
+                <button
+                  type="button"
+                  :disabled="!msg.messageId"
+                  :aria-expanded="sourcesOpen && sourcesMessageId === msg.messageId"
+                  @click="inspectSources(msg, $event)"
+                >
+                  <el-icon><Document /></el-icon>本轮检索参考
+                </button>
+                <span v-if="sourcesStatus(msg, index)" role="status">{{
+                  sourcesStatus(msg, index)
+                }}</span>
+              </div>
             </AssistantResponse>
             <template v-else>{{ msg.text }}</template>
             <!-- 用户消息携带的附件：图片缩略图/文本芯片，历史消息与刚发送的消息共用同一组件 -->
@@ -437,6 +503,19 @@ defineExpose({ newSession })
         />
       </div>
     </Teleport>
+    <WorkspaceKnowledgeSourcesDrawer
+      :model-value="sourcesOpen"
+      :agent-code="agentCode"
+      :session-id="activeSessionId"
+      :message-id="sourcesMessageId"
+      @update:model-value="
+        (value) => {
+          if (!value) closeKnowledgeSources()
+        }
+      "
+      @closed="restoreSourcesFocus"
+      @recorded="confirmSourceRecord"
+    />
   </div>
 </template>
 
@@ -448,6 +527,38 @@ defineExpose({ newSession })
 }
 .chat-panel.has-details {
   grid-template-columns: minmax(0, 1fr) 320px;
+}
+.message-knowledge-sources {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+.message-knowledge-sources button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: var(--theme-primary-solid);
+  font: inherit;
+  cursor: pointer;
+}
+.message-knowledge-sources button:disabled {
+  cursor: default;
+  color: var(--cw-text-muted);
+}
+.message-knowledge-sources button:focus-visible {
+  outline: 2px solid var(--theme-primary-solid);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+.message-knowledge-sources span {
+  color: var(--cw-text-muted);
 }
 .execution-details {
   min-height: 0;
@@ -472,6 +583,10 @@ defineExpose({ newSession })
   font-weight: 600;
 }
 @container workspace-panel (max-width: 700px) {
+  .message-knowledge-sources button {
+    min-width: 44px;
+    min-height: 44px;
+  }
   .chat-panel {
     --conversation-messages-padding: 20px 16px;
     --conversation-composer-padding: 8px 12px 12px;

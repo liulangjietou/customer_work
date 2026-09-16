@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.richard.fyoung.customeradmin.workspace.chat.mapper.ChatKnowledgeEvidenceMapper">
+    <insert id="insertIfAbsent">
+        INSERT INTO ai_chat_knowledge_evidence
+            (tenant_id, state_user_id, agent_code, session_id, turn_id, message_id, retrievals, created_at_ms)
+        VALUES
+            (#{evidence.tenantId}, #{evidence.stateUserId}, #{evidence.agentCode}, #{evidence.sessionId},
+             #{evidence.turnId}, #{evidence.messageId}, #{evidence.retrievals}, #{evidence.createdAtMs})
+        ON DUPLICATE KEY UPDATE id = id
+    </insert>
+    <select id="findByMessage"
+            resultType="com.richard.fyoung.customeradmin.workspace.chat.entity.ChatKnowledgeEvidence">
+        SELECT id, tenant_id, state_user_id, agent_code, session_id, turn_id, message_id, retrievals, created_at_ms
+        FROM ai_chat_knowledge_evidence
+        WHERE tenant_id = #{tenantId}
+          AND state_user_id = #{stateUserId}
+          AND agent_code = #{agentCode}
+          AND session_id = #{sessionId}
+          AND message_id = #{messageId}
+        LIMIT 1
+    </select>
+</mapper>
