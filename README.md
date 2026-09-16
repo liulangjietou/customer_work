@@ -26,7 +26,7 @@
 
 ## 作品演示
 
-[![作品演示](https://github.com/user-attachments/assets/75a324d7-4e2e-4383-b049-c3cfc7802ee5)](https://www.bilibili.com/video/BV1nhes6ZEZa/?t=19.5&vd_source=03686e8b5675ab4a5314432c9c02feeb)
+[![作品演示](https://github.com/user-attachments/assets/75a324d7-4e2e-4383-b049-c3cfc7802ee5)](https://www.bilibili.com/video/BV1nhes6ZEZa/?spm_id_from=333.1387.homepage.video_card.click&vd_source=03686e8b5675ab4a5314432c9c02feeb)
 
 ## 导航
 
