@@ -158,29 +158,32 @@ public class ImprovementCaseService {
         });
     }
 
+    /**
+     * 先锁定改进项并确认状态，再创建独立可追溯的客服端用例；避免被拒绝的操作留下额外用例。
+     * Admin 行锁覆盖创建与绑定，阻止同一改进项在两步之间进入复评或发布。
+     */
     public ImprovementCaseVO createEvalCase(Long id, ImprovementEvalCaseRequest request,
                                             String operator) {
-        AgentImprovementCase snapshot = require(id);
-        ImprovementSourceType sourceType = ImprovementSourceType.valueOf(snapshot.getSourceType());
-        ImprovementSourceFact source = requireSource(sourceType, snapshot.getSourceKey());
-        if (!StringUtils.hasText(source.getQuestion())) {
-            throw invalid("原始问题缺失，不能构造可复评用例");
-        }
-        ImprovementSignalGateway gateway = signalGatewayProvider.get();
-        if (gateway.evalCaseStore().find(request.evalType(), request.caseId()).isPresent()) {
-            throw invalid("评测用例编号已存在：" + request.caseId());
-        }
-        if (sourceType == ImprovementSourceType.BADCASE) {
-            badcaseGatewayProvider.get().adoptAsEvalCase(snapshot.getSourceKey(), request.caseId(),
-                request.evalType(), request.expected(), request.category(), operator);
-        } else {
-            gateway.evalCaseStore().save(new PersistedEvalCase(request.caseId(), request.evalType(),
-                source.getQuestion(), request.expected(), request.category(), EvalCaseSource.MANUAL,
-                true, "knowledge-gap:" + snapshot.getSourceKey(), System.currentTimeMillis()));
-        }
         return transactionTemplate.execute(status -> {
             AgentImprovementCase row = lock(id);
             assertMutable(row);
+            ImprovementSourceType sourceType = ImprovementSourceType.valueOf(row.getSourceType());
+            ImprovementSourceFact source = requireSource(sourceType, row.getSourceKey());
+            if (!StringUtils.hasText(source.getQuestion())) {
+                throw invalid("原始问题缺失，不能构造可复评用例");
+            }
+            ImprovementSignalGateway gateway = signalGatewayProvider.get();
+            if (gateway.evalCaseStore().find(request.evalType(), request.caseId()).isPresent()) {
+                throw invalid("评测用例编号已存在：" + request.caseId());
+            }
+            if (sourceType == ImprovementSourceType.BADCASE) {
+                badcaseGatewayProvider.get().adoptAsEvalCase(row.getSourceKey(), request.caseId(),
+                    request.evalType(), request.expected(), request.category(), operator);
+            } else {
+                gateway.evalCaseStore().save(new PersistedEvalCase(request.caseId(), request.evalType(),
+                    source.getQuestion(), request.expected(), request.category(), EvalCaseSource.MANUAL,
+                    true, "knowledge-gap:" + row.getSourceKey(), System.currentTimeMillis()));
+            }
             row.setEvalType(request.evalType().name());
             row.setEvalCaseId(request.caseId());
             resetAfterEvalCaseChange(row);
@@ -517,6 +520,7 @@ public class ImprovementCaseService {
     private void assertMutable(AgentImprovementCase row) {
         ImprovementCaseStatus status = statusOf(row);
         if (status == ImprovementCaseStatus.PUBLISHING || status == ImprovementCaseStatus.OBSERVING
+            || status == ImprovementCaseStatus.REEVALUATING
             || status == ImprovementCaseStatus.VERIFIED || status == ImprovementCaseStatus.CANCELLED) {
             throw invalid("当前状态不能更换评测用例：" + status);
         }

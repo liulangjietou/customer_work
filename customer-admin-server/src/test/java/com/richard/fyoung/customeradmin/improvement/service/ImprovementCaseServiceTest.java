@@ -16,8 +16,10 @@ import com.richard.fyoung.customeradmin.improvement.domain.ImprovementCaseStatus
 import com.richard.fyoung.customeradmin.improvement.domain.ImprovementEffectStatus;
 import com.richard.fyoung.customeradmin.improvement.domain.ImprovementReevaluationStatus;
 import com.richard.fyoung.customeradmin.improvement.domain.ImprovementSourceType;
+import com.richard.fyoung.customeradmin.improvement.dto.ImprovementEvalCaseRequest;
 import com.richard.fyoung.customeradmin.improvement.entity.AgentImprovementCase;
 import com.richard.fyoung.customeradmin.improvement.jdbc.ImprovementSignalGateway;
+import com.richard.fyoung.customeradmin.improvement.jdbc.ImprovementSourceFact;
 import com.richard.fyoung.customeradmin.improvement.mapper.AgentImprovementCaseMapper;
 import com.richard.fyoung.customeradmin.improvement.mapper.ImprovementSignalMapper;
 import com.richard.fyoung.customerwork.capability.eval.EvalCaseStore;
@@ -27,8 +29,11 @@ import com.richard.fyoung.customerwork.capability.eval.EvalRun;
 import com.richard.fyoung.customerwork.capability.eval.EvalTrigger;
 import com.richard.fyoung.customerwork.capability.eval.EvalType;
 import com.richard.fyoung.customerwork.capability.eval.EvalVersionBinding;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionStatus;
 
@@ -40,6 +45,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -56,6 +63,7 @@ class ImprovementCaseServiceTest {
     private ImprovementAutomationProperties properties;
     private ObjectMapper objectMapper;
     private ImprovementCaseService service;
+    private EvalCaseStore evalCaseStore;
 
     @BeforeEach
     void setUp() {
@@ -72,15 +80,76 @@ class ImprovementCaseServiceTest {
         properties.setMaxRecurrenceSignals(0);
         objectMapper = new ObjectMapper();
 
+        evalCaseStore = mock(EvalCaseStore.class);
         ImprovementSignalGatewayProvider gatewayProvider = mock(ImprovementSignalGatewayProvider.class);
         when(gatewayProvider.get()).thenReturn(
-            new ImprovementSignalGateway(signalMapper, mock(EvalCaseStore.class)));
+            new ImprovementSignalGateway(signalMapper, evalCaseStore));
         PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
         when(transactionManager.getTransaction(any())).thenReturn(mock(TransactionStatus.class));
         service = new ImprovementCaseService(caseMapper, gatewayProvider,
             mock(BadcaseGatewayProvider.class), mock(AiAgentMapper.class), publisher,
             evalAdminService, publishTaskService, publishTaskMapper, properties, objectMapper,
             transactionManager);
+    }
+
+    /** 原测试只覆盖复评与发布，没有验证创建用例被拒绝时是否已在客服库写入。 */
+    @ParameterizedTest
+    @EnumSource(value = ImprovementCaseStatus.class,
+        names = {"PUBLISHING", "OBSERVING", "VERIFIED", "CANCELLED", "REEVALUATING"})
+    void createEvalCaseMustCheckLockedStateBeforeWriting(ImprovementCaseStatus state) throws Exception {
+        AgentImprovementCase before = row(ImprovementCaseStatus.OWNED, candidate("model-v1"));
+        before.setSourceType(ImprovementSourceType.KNOWLEDGE_GAP.name());
+        before.setSourceKey("knowledge-gap-1");
+        AgentImprovementCase locked = row(state, candidate("model-v1"));
+        locked.setSourceType(ImprovementSourceType.KNOWLEDGE_GAP.name());
+        locked.setSourceKey("knowledge-gap-1");
+        when(caseMapper.selectById(1L)).thenReturn(before);
+        when(caseMapper.lockById(1L)).thenReturn(locked);
+        var fact = new ImprovementSourceFact();
+        fact.setQuestion("退款进度如何");
+        fact.setSignalHash("signal-a");
+        when(signalMapper.findKnowledgeGap("tenant-a", before.getSourceKey())).thenReturn(fact);
+        var request = new ImprovementEvalCaseRequest(
+            "case-new", EvalType.INTENT, "refund", "refund");
+
+        TenantContext.runWith("tenant-a", () ->
+            assertThrows(BizException.class, () -> service.createEvalCase(1L, request, "operator-a")));
+
+        verify(evalCaseStore, never()).save(any());
+        assertEquals("case-target", locked.getEvalCaseId());
+        assertEquals(state.name(), locked.getStatus());
+    }
+
+    @Test
+    void createEvalCaseMustLockBeforeCreationAndBindAfterItSucceeds() throws Exception {
+        AgentImprovementCase row = ownedKnowledgeGapRow();
+        var request = new ImprovementEvalCaseRequest(
+            "case-new", EvalType.INTENT, "refund", "refund");
+        var result = TenantContext.callWith("tenant-a", () ->
+            service.createEvalCase(1L, request, "operator-a"));
+
+        var order = inOrder(caseMapper, evalCaseStore);
+        order.verify(caseMapper).lockById(1L);
+        order.verify(evalCaseStore).save(any());
+        order.verify(caseMapper).updateById(row);
+        assertEquals("case-new", result.evalCaseId());
+        assertEquals(ImprovementCaseStatus.READY_FOR_REEVALUATION, result.status());
+        assertEquals(ImprovementReevaluationStatus.NOT_RUN, result.reevaluationStatus());
+    }
+
+    @Test
+    void failedCaseCreationMustKeepThePriorBinding() throws Exception {
+        AgentImprovementCase row = ownedKnowledgeGapRow();
+        doThrow(new IllegalStateException("case store unavailable"))
+            .when(evalCaseStore).save(any());
+        var request = new ImprovementEvalCaseRequest(
+            "case-new", EvalType.INTENT, "refund", "refund");
+        TenantContext.runWith("tenant-a", () ->
+            assertThrows(IllegalStateException.class, () -> service.createEvalCase(1L, request, "operator-a")));
+
+        verify(caseMapper, never()).updateById(any(AgentImprovementCase.class));
+        assertEquals("case-target", row.getEvalCaseId());
+        assertEquals(ImprovementCaseStatus.OWNED.name(), row.getStatus());
     }
 
     @Test
@@ -271,6 +340,18 @@ class ImprovementCaseServiceTest {
 
         assertEquals(ImprovementCaseStatus.INCONCLUSIVE.name(), lowTraffic.getStatus());
         assertEquals(ImprovementEffectStatus.INCONCLUSIVE.name(), lowTraffic.getEffectStatus());
+    }
+
+    private AgentImprovementCase ownedKnowledgeGapRow() throws Exception {
+        AgentImprovementCase row = row(ImprovementCaseStatus.OWNED, candidate("model-v1"));
+        row.setSourceType(ImprovementSourceType.KNOWLEDGE_GAP.name());
+        row.setSourceKey("knowledge-gap-1");
+        when(caseMapper.lockById(1L)).thenReturn(row);
+        var fact = new ImprovementSourceFact();
+        fact.setQuestion("退款进度如何");
+        fact.setSignalHash("signal-a");
+        when(signalMapper.findKnowledgeGap("tenant-a", row.getSourceKey())).thenReturn(fact);
+        return row;
     }
 
     private AgentImprovementCase row(ImprovementCaseStatus status,
