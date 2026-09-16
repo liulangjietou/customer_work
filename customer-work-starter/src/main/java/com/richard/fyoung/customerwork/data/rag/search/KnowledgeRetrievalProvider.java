@@ -37,4 +37,13 @@ public interface KnowledgeRetrievalProvider {
     default String retrieve(String agentCode, String query, AgentInvocationIdentity identity) {
         return retrieve(agentCode, query);
     }
+
+    /**
+     * 返回可用于运营统计的执行结果。默认保持旧函数式实现的空值行为；内部处理失败或跳过检索的
+     * 宿主必须覆写此方法，不能把这些情况声明为正常未命中。
+     */
+    default KnowledgeRetrievalResult retrieveResult(String agentCode, String query,
+                                                     AgentInvocationIdentity identity) {
+        return KnowledgeRetrievalResult.completed(retrieve(agentCode, query, identity));
+    }
 }

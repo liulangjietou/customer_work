@@ -16,13 +16,9 @@ import com.richard.fyoung.customerwork.core.constant.StatusFlags;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeBaseEndpoint;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeNode;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeRetrievalProvider;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeRetrievalResult;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeSearchResult;
 import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
-import org.springframework.util.CollectionUtils;
-import org.springframework.util.StringUtils;
-
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -30,10 +26,15 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+import org.springframework.util.CollectionUtils;
+import org.springframework.util.StringUtils;
 
 /**
  * 按 Agent 绑定的不可变知识库版本检索：托管文档走本地向量与 ACL，外部 RAG 走版本冻结的连接参数。
- * 检索只是旁路增强，唯一异常防御点收敛在 {@link #retrieve(String, String, AgentInvocationIdentity)}。
+ * 检索只是旁路增强，失败不打断对话；执行状态由 {@link #retrieveResult} 传递给统计调用方。
  */
 @Component
 public class KnowledgeRetrievalService implements KnowledgeRetrievalProvider {
@@ -78,26 +79,37 @@ public class KnowledgeRetrievalService implements KnowledgeRetrievalProvider {
 
     @Override
     public String retrieve(String agentCode, String query, AgentInvocationIdentity identity) {
+        return retrieveResult(agentCode, query, identity).block();
+    }
+
+    /** 区分没有目标、正常未命中和故障降级，正文与原有字符串入口保持一致。 */
+    @Override
+    public KnowledgeRetrievalResult retrieveResult(String agentCode, String query,
+                                                    AgentInvocationIdentity identity) {
         if (!StringUtils.hasText(agentCode) || !StringUtils.hasText(query)) {
-            return null;
+            return KnowledgeRetrievalResult.skipped();
         }
         try {
             RetrievalTargets targets = resolveTargets(agentCode);
             if (targets.empty()) {
-                return null;
+                return KnowledgeRetrievalResult.skipped();
             }
             List<KnowledgeNode> nodes = new ArrayList<>();
+            boolean complete = true;
             if (!targets.externalEndpoints().isEmpty()) {
-                nodes.addAll(searchClient.searchAll(targets.externalEndpoints(), query));
+                KnowledgeSearchResult result = searchClient.searchAllResult(targets.externalEndpoints(), query);
+                nodes.addAll(result.nodes());
+                complete = result.complete();
             }
             for (ManagedTarget target : targets.managedTargets()) {
                 nodes.addAll(managedSearchService.search(target.knowledgeBaseName(), target.version(),
                     query, identity));
             }
             if (CollectionUtils.isEmpty(nodes)) {
-                log.info("[rag] retrieval hit nothing, agentCode={}, targetCount={}",
-                    agentCode, targets.count());
-                return null;
+                log.info("[rag] retrieval returned no nodes, agentCode={}, targetCount={}, complete={}",
+                    agentCode, targets.count(), complete);
+                return complete ? KnowledgeRetrievalResult.completed(null)
+                    : KnowledgeRetrievalResult.degraded(null);
             }
             List<KnowledgeNode> ranked = nodes.stream()
                 .sorted(Comparator.comparing(KnowledgeNode::score).reversed())
@@ -105,10 +117,12 @@ public class KnowledgeRetrievalService implements KnowledgeRetrievalProvider {
                 .toList();
             log.info("[rag] retrieval hit, agentCode={}, targetCount={}, nodeCount={}",
                 agentCode, targets.count(), ranked.size());
-            return renderBlock(ranked);
+            String block = renderBlock(ranked);
+            return complete ? KnowledgeRetrievalResult.completed(block)
+                : KnowledgeRetrievalResult.degraded(block);
         } catch (Exception e) {
-            log.error("[rag] retrieval failed, code={}, agentCode={}", CODE_RETRIEVAL_FAIL, agentCode, e);
-            return null;
+            log.error("[rag] retrieval failed, errorCode={}, agentCode={}", CODE_RETRIEVAL_FAIL, agentCode, e);
+            return KnowledgeRetrievalResult.degraded(null);
         }
     }
 

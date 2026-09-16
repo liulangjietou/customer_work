@@ -5,20 +5,23 @@ import com.richard.fyoung.customerwork.safety.security.HttpTargetForbiddenExcept
 import com.richard.fyoung.customerwork.safety.security.HttpTargetGuard;
 import com.richard.fyoung.customerwork.safety.security.HttpTargetPolicy;
 import com.richard.fyoung.customerwork.safety.security.InternalAddressPolicy;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.spy;
@@ -280,5 +283,95 @@ class KnowledgeSearchOpsTest {
             () -> spyOps.searchAll(List.of(endpoint(1L, "kb1", 5, "0")), "问题"));
 
         assertTrue(nodes.isEmpty(), "检索失败绝不抛异常打断对话");
+    }
+
+    @Test
+    void resultShouldDistinguishCompleteEmptySearchFromPartialFailure() {
+        KnowledgeSearchOps spyOps = spy(ops);
+        KnowledgeBaseEndpoint healthy = endpoint(1L, "kb1", 5, "0.5");
+        KnowledgeBaseEndpoint broken = endpoint(2L, "kb2", 5, "0");
+        doReturn(List.of(node("kb1", "低于阈值", "0.18")))
+            .when(spyOps).searchOne(eq(healthy), anyString());
+        doThrow(new KnowledgeSearchException("unavailable"))
+            .when(spyOps).searchOne(eq(broken), anyString());
+
+        KnowledgeSearchResult complete = spyOps.searchAllResult(List.of(healthy), "问题");
+        assertTrue(complete.complete());
+        assertTrue(complete.nodes().isEmpty(), "正常阈值过滤后的空结果仍是一次完整检索");
+        KnowledgeSearchResult partial = spyOps.searchAllResult(List.of(healthy, broken), "问题");
+        assertFalse(partial.complete(), "一个库成功但未命中，不能掩盖另一个库失败");
+        assertTrue(partial.nodes().isEmpty());
+    }
+
+    @Test
+    void resultShouldKeepSuccessfulNodesWhenAnotherTargetFails() {
+        KnowledgeSearchOps spyOps = spy(ops);
+        KnowledgeBaseEndpoint healthy = endpoint(1L, "kb1", 5, "0");
+        KnowledgeBaseEndpoint broken = endpoint(2L, "kb2", 5, "0");
+        KnowledgeNode retained = node("kb1", "成功取得的资料", "0.18");
+        doReturn(List.of(retained)).when(spyOps).searchOne(eq(healthy), anyString());
+        doThrow(new KnowledgeSearchException("unavailable"))
+            .when(spyOps).searchOne(eq(broken), anyString());
+
+        KnowledgeSearchResult result = spyOps.searchAllResult(List.of(healthy, broken), "问题");
+
+        assertFalse(result.complete());
+        assertEquals(List.of(retained), result.nodes());
+    }
+
+    @Test
+    void timeoutShouldRemainIncompleteAfterTheLateTargetFinishes() throws Exception {
+        KnowledgeSearchSettings settings = new KnowledgeSearchSettings();
+        settings.setRetrievalTimeoutSeconds(1);
+        KnowledgeSearchOps spyOps = spy(new KnowledgeSearchOps(allowInternalGuard(), settings));
+        KnowledgeBaseEndpoint late = endpoint(1L, "late", 5, "0");
+        CountDownLatch release = new CountDownLatch(1);
+        CountDownLatch finished = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            try {
+                assertTrue(release.await(5, TimeUnit.SECONDS));
+                return List.of(node("late", "迟到的资料", "0.8"));
+            } finally {
+                finished.countDown();
+            }
+        }).when(spyOps).searchOne(eq(late), anyString());
+
+        KnowledgeSearchResult result;
+        try {
+            result = spyOps.searchAllResult(List.of(late), "问题");
+            assertFalse(result.complete());
+            assertTrue(result.nodes().isEmpty());
+        } finally {
+            release.countDown();
+        }
+        assertTrue(finished.await(5, TimeUnit.SECONDS));
+        assertFalse(result.complete());
+        assertTrue(result.nodes().isEmpty(), "迟到任务不得修改已经返回的检索事实");
+    }
+
+    @Test
+    void interruptedWaitShouldPreserveInterruptAndReportIncomplete() throws Exception {
+        KnowledgeSearchOps spyOps = spy(ops);
+        KnowledgeBaseEndpoint target = endpoint(1L, "blocked", 5, "0");
+        CountDownLatch release = new CountDownLatch(1);
+        CountDownLatch finished = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            try {
+                assertTrue(release.await(5, TimeUnit.SECONDS));
+                return List.of();
+            } finally {
+                finished.countDown();
+            }
+        }).when(spyOps).searchOne(eq(target), anyString());
+        try {
+            Thread.currentThread().interrupt();
+            KnowledgeSearchResult result = spyOps.searchAllResult(List.of(target), "问题");
+            assertFalse(result.complete());
+            assertTrue(Thread.currentThread().isInterrupted(), "调用者中断信号不能被检索降级吞掉");
+        } finally {
+            Thread.interrupted();
+            release.countDown();
+        }
+        assertTrue(finished.await(5, TimeUnit.SECONDS));
     }
 }

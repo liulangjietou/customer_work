@@ -3,6 +3,7 @@ package com.richard.fyoung.customeradmin.aiconfig.knowledgebase.runtime;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.richard.fyoung.customeradmin.aiconfig.agent.entity.AiAgent;
 import com.richard.fyoung.customeradmin.aiconfig.agent.mapper.AiAgentMapper;
+import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.client.KnowledgeBaseHttpGuard;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.client.KnowledgeSearchClient;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.dto.KnowledgeBaseTestResult;
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.entity.AiAgentKnowledgeBase;
@@ -12,16 +13,32 @@ import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledg
 import com.richard.fyoung.customeradmin.aiconfig.knowledgebase.mapper.AiKnowledgeBaseVersionMapper;
 import com.richard.fyoung.customeradmin.common.constant.ConnectivityTestStatus;
 import com.richard.fyoung.customeradmin.common.crypto.AesGcmCryptoUtil;
+import com.richard.fyoung.customeradmin.config.AdminRagProperties;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeBaseEndpoint;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeGapRecorder;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeNode;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeRetrievalResult;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeSearchResult;
+import com.sun.net.httpserver.HttpServer;
+import io.agentscope.core.agent.RuntimeContext;
+import io.agentscope.core.message.Msg;
+import io.agentscope.core.message.MsgRole;
+import io.agentscope.core.message.TextBlock;
+import io.agentscope.core.middleware.ReasoningInput;
+import java.math.BigDecimal;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-
-import java.math.BigDecimal;
-import java.util.List;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import reactor.core.publisher.Flux;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -105,7 +122,7 @@ class KnowledgeRetrievalServiceTest {
         when(agentKnowledgeBaseMapper.selectList(any())).thenReturn(List.of());
 
         assertNull(service.retrieve(AGENT_CODE, "公积金怎么提取"), "未绑定知识库=不注入");
-        verify(searchClient, never()).searchAll(anyList(), anyString());
+        verify(searchClient, never()).searchAllResult(anyList(), anyString());
     }
 
     @Test
@@ -113,20 +130,21 @@ class KnowledgeRetrievalServiceTest {
         when(agentMapper.selectOne(any())).thenReturn(null);
 
         assertNull(service.retrieve(AGENT_CODE, "问题"));
-        verify(searchClient, never()).searchAll(anyList(), anyString());
+        verify(searchClient, never()).searchAllResult(anyList(), anyString());
     }
 
     @Test
     void retrieve_shouldReturnOriginal_whenQueryOrAgentCodeBlank() {
         assertNull(service.retrieve("", "问题"));
         assertNull(service.retrieve(AGENT_CODE, "  "));
-        verify(searchClient, never()).searchAll(anyList(), anyString());
+        verify(searchClient, never()).searchAllResult(anyList(), anyString());
     }
 
     @Test
     void retrieve_shouldNotInjectEmptyBlock_whenNothingRetrieved() {
         bindKnowledgeBase(usableKnowledgeBase());
-        when(searchClient.searchAll(anyList(), anyString())).thenReturn(List.of());
+        when(searchClient.searchAllResult(anyList(), anyString()))
+            .thenReturn(new KnowledgeSearchResult(List.of(), true));
 
         assertNull(service.retrieve(AGENT_CODE, "公积金怎么提取"), "召回为空时绝不注入空标签污染上下文");
     }
@@ -134,8 +152,8 @@ class KnowledgeRetrievalServiceTest {
     @Test
     void retrieve_shouldRenderSelfContainedBlock_withSourceAndScore() {
         bindKnowledgeBase(usableKnowledgeBase());
-        when(searchClient.searchAll(anyList(), anyString())).thenReturn(List.of(
-            new KnowledgeNode("产品知识库", "提取需先满足封存满半年", new BigDecimal("0.183"), "doc-9", "chunk-3")));
+        when(searchClient.searchAllResult(anyList(), anyString())).thenReturn(new KnowledgeSearchResult(List.of(
+            new KnowledgeNode("产品知识库", "提取需先满足封存满半年", new BigDecimal("0.183"), "doc-9", "chunk-3")), true));
 
         String result = service.retrieve(AGENT_CODE, "公积金怎么提取");
 
@@ -159,7 +177,7 @@ class KnowledgeRetrievalServiceTest {
 
         // 停用后运行时立刻不再参与检索：可用端点被过滤空 → 直接零开销返回，一个请求都不发
         assertNull(service.retrieve(AGENT_CODE, "问题"));
-        verify(searchClient, never()).searchAll(anyList(), anyString());
+        verify(searchClient, never()).searchAllResult(anyList(), anyString());
     }
 
     @Test
@@ -169,26 +187,112 @@ class KnowledgeRetrievalServiceTest {
         bindKnowledgeBase(untested);
 
         assertNull(service.retrieve(AGENT_CODE, "问题"));
-        verify(searchClient, never()).searchAll(anyList(), anyString());
+        verify(searchClient, never()).searchAllResult(anyList(), anyString());
     }
 
     @Test
     void retrieve_shouldReturnNull_whenSearchThrows() {
         bindKnowledgeBase(usableKnowledgeBase());
-        when(searchClient.searchAll(anyList(), anyString())).thenThrow(new IllegalStateException("boom"));
+        when(searchClient.searchAllResult(anyList(), anyString())).thenThrow(new IllegalStateException("boom"));
 
         assertNull(assertDoesNotThrow(() -> service.retrieve(AGENT_CODE, "问题")),
             "检索异常必须降级为不注入，绝不打断对话");
     }
 
+    /** 现有用例分开验证“服务吞异常”和“中间件识别抛异常”，没有接起真实两层。 */
+    @Test
+    void injectionShouldNotClassifyAHandledRetrievalFailureAsKnowledgeGap() {
+        bindKnowledgeBase(usableKnowledgeBase());
+        when(searchClient.searchAllResult(anyList(), anyString()))
+            .thenThrow(new IllegalStateException("retrieval unavailable"));
+        assertEquals(0, missesAfterInjection(), "检索故障不属于缺失知识，不能写入未命中排行");
+    }
+
+    @Test
+    void injectionShouldNotClassifyUnconfiguredKnowledgeAsAnObservedMiss() {
+        when(agentKnowledgeBaseMapper.selectList(any())).thenReturn(List.of());
+        assertEquals(0, missesAfterInjection(), "尚未配置检索目标，不应制造已执行检索未命中的事实");
+    }
+
+    @Test
+    void injectionShouldStillRecordAnActualEmptyRetrieval() {
+        bindKnowledgeBase(usableKnowledgeBase());
+        when(searchClient.searchAllResult(anyList(), anyString()))
+            .thenReturn(new KnowledgeSearchResult(List.of(), true));
+        assertEquals(1, missesAfterInjection());
+    }
+
+    @Test
+    void retrieveShouldKeepPartialHitsMarkedDegraded() {
+        bindKnowledgeBase(usableKnowledgeBase());
+        when(searchClient.searchAllResult(anyList(), anyString())).thenReturn(new KnowledgeSearchResult(
+            List.of(new KnowledgeNode("产品知识库", "可核对的退款流程", BigDecimal.ONE, "refund", "c1")), false));
+
+        KnowledgeRetrievalResult result = service.retrieveResult(AGENT_CODE, "退款流程", null);
+
+        assertEquals(KnowledgeRetrievalResult.Status.DEGRADED, result.status());
+        assertTrue(result.block().contains("可核对的退款流程"), "部分故障不能丢弃其他外部知识库的有效召回");
+        assertTrue(result.block().contains("doc_id=refund"));
+    }
+
+    /** 接起实际 HTTP 执行核心，避免只验证“客户端抛异常”的桩而漏掉内部降级。 */
+    @ParameterizedTest
+    @CsvSource({"503,0", "200,1"})
+    void injectionShouldUseActualHttpOutcome(int status, int expectedMisses) throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        AtomicInteger requests = new AtomicInteger();
+        server.createContext("/api/v1/knowledge/search", exchange -> {
+            requests.incrementAndGet();
+            String payload = status == 200 ? "{\"code\":\"OK\",\"data\":{\"nodes\":[]}}"
+                : "{\"code\":\"UNAVAILABLE\"}";
+            byte[] body = payload.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(status, body.length);
+            try (var response = exchange.getResponseBody()) {
+                response.write(body);
+            }
+        });
+        server.start();
+        try {
+            AiKnowledgeBase knowledgeBase = usableKnowledgeBase();
+            knowledgeBase.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
+            bindKnowledgeBase(knowledgeBase);
+            AdminRagProperties properties = new AdminRagProperties();
+            KnowledgeSearchClient httpClient = new KnowledgeSearchClient(
+                new KnowledgeBaseHttpGuard(properties), properties);
+            service = new KnowledgeRetrievalService(agentMapper, agentKnowledgeBaseMapper,
+                knowledgeBaseMapper, mock(AiKnowledgeBaseVersionMapper.class),
+                new AesGcmCryptoUtil(TEST_SECRET_KEY), httpClient,
+                mock(ManagedKnowledgeSearchService.class));
+            assertEquals(expectedMisses, missesAfterInjection(), "统计应以真实 HTTP 执行结果为准");
+            assertEquals(1, requests.get());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    private int missesAfterInjection() {
+        AtomicInteger misses = new AtomicInteger();
+        KnowledgeGapRecorder recorder = (session, question) -> misses.incrementAndGet();
+        var middleware = new KnowledgeRetrievalMiddleware(service, AGENT_CODE, recorder);
+        var input = new ReasoningInput(List.of(Msg.builder().role(MsgRole.USER).name("user")
+            .content(TextBlock.builder().text("退款需要哪些凭证").build()).build()), null, null);
+        middleware.onReasoning(null, RuntimeContext.builder().userId("42").sessionId("s1").build(),
+            input, next -> {
+                assertEquals(input, next, "检索无结果时保持原模型输入，检索故障不能中断对话");
+                return Flux.empty();
+            }).blockLast(Duration.ofSeconds(5));
+        return misses.get();
+    }
+
     @Test
     void retrieve_shouldPassDecryptedApiKeyToClient() {
         bindKnowledgeBase(usableKnowledgeBase());
-        when(searchClient.searchAll(anyList(), anyString())).thenReturn(List.of());
+        when(searchClient.searchAllResult(anyList(), anyString()))
+            .thenReturn(new KnowledgeSearchResult(List.of(), true));
 
         service.retrieve(AGENT_CODE, "问题");
 
-        verify(searchClient).searchAll(List.of(new KnowledgeBaseEndpoint(40L, "产品知识库",
+        verify(searchClient).searchAllResult(List.of(new KnowledgeBaseEndpoint(40L, "产品知识库",
             "http://localhost:20002", "app_123", "sk-1", "application/json", "", 5, BigDecimal.ZERO)), "问题");
     }
 }

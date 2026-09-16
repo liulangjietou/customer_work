@@ -5,12 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.richard.fyoung.customerwork.core.constant.HttpAuthConstants;
 import com.richard.fyoung.customerwork.safety.security.HttpTargetForbiddenException;
 import com.richard.fyoung.customerwork.safety.security.HttpTargetGuard;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.http.HttpHeaders;
-import org.springframework.util.CollectionUtils;
-import org.springframework.util.StringUtils;
-
 import java.math.BigDecimal;
 import java.net.ConnectException;
 import java.net.URI;
@@ -35,6 +29,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
+import org.springframework.util.CollectionUtils;
+import org.springframework.util.StringUtils;
 
 /**
  * 外部 RAG 知识库检索的执行核心（JDK 内置 {@link HttpClient}，与 {@code ModelConfig}/
@@ -209,38 +208,56 @@ public class KnowledgeSearchOps {
      * 也不会无上限地把全部库的召回都塞进上下文。</p>
      */
     public List<KnowledgeNode> searchAll(List<KnowledgeBaseEndpoint> endpoints, String query) {
+        return searchAllResult(endpoints, query).nodes();
+    }
+
+    /** 保持部分成功召回，同时把失败和整体等待超时传递给统计调用方。 */
+    public KnowledgeSearchResult searchAllResult(List<KnowledgeBaseEndpoint> endpoints, String query) {
         if (CollectionUtils.isEmpty(endpoints) || !StringUtils.hasText(query)) {
-            return List.of();
+            return new KnowledgeSearchResult(List.of(), true);
         }
-        List<CompletableFuture<List<KnowledgeNode>>> futures = endpoints.stream()
+        List<CompletableFuture<KnowledgeSearchResult>> futures = endpoints.stream()
             .map(endpoint -> CompletableFuture
-                .supplyAsync(() -> filterByThreshold(searchOne(endpoint, query), endpoint), SEARCH_EXECUTOR)
+                .supplyAsync(() -> new KnowledgeSearchResult(
+                    filterByThreshold(searchOne(endpoint, query), endpoint), true), SEARCH_EXECUTOR)
                 .exceptionally(ex -> {
-                    log.error("rag search degraded to empty, code={}, kbId={}, kbName={}",
+                    log.error("rag search degraded to empty, errorCode={}, kbId={}, kbName={}",
                         CODE_SEARCH_FAIL, endpoint.id(), endpoint.kbName(), ex);
-                    return List.<KnowledgeNode>of();
+                    return new KnowledgeSearchResult(List.of(), false);
                 }))
             .collect(Collectors.toList());
 
+        boolean complete = true;
         try {
             CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
                 .get(settings.getRetrievalTimeoutSeconds(), TimeUnit.SECONDS);
         } catch (Exception e) {
-            log.error("rag search wait timeout or interrupted, code={}, kbCount={}",
+            complete = false;
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            log.error("rag search wait timeout or interrupted, errorCode={}, kbCount={}",
                 "RAG-SEARCH-TIMEOUT", endpoints.size(), e);
         }
 
         List<KnowledgeNode> merged = new ArrayList<>();
-        for (CompletableFuture<List<KnowledgeNode>> future : futures) {
-            // 整体超时后仍未完成的库直接跳过（getNow 给默认空值），已完成的照常合并
-            merged.addAll(future.getNow(List.of()));
+        for (CompletableFuture<KnowledgeSearchResult> future : futures) {
+            // 返回时冻结已完成的部分；迟到结果不能把本次不完整检索改成正常未命中。
+            KnowledgeSearchResult result = future.getNow(null);
+            if (result == null) {
+                complete = false;
+            } else {
+                complete &= result.complete();
+                merged.addAll(result.nodes());
+            }
         }
         int limit = endpoints.stream().mapToInt(KnowledgeBaseEndpoint::effectiveTopN).max()
             .orElse(KnowledgeBaseEndpoint.DEFAULT_TOP_N);
-        return merged.stream()
+        List<KnowledgeNode> ranked = merged.stream()
             .sorted(Comparator.comparing(KnowledgeNode::score, Comparator.reverseOrder()))
             .limit(limit)
             .collect(Collectors.toList());
+        return new KnowledgeSearchResult(ranked, complete);
     }
 
     /** 按知识库自身阈值过滤：score 严格小于阈值即丢弃；阈值为 0（默认）时全部保留。 */

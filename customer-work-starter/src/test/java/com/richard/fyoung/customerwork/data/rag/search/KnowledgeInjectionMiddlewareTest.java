@@ -9,13 +9,12 @@ import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.middleware.ReasoningInput;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import reactor.core.publisher.Flux;
-
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import reactor.core.publisher.Flux;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -54,11 +53,11 @@ class KnowledgeInjectionMiddlewareTest {
     @BeforeEach
     void setUp() {
         retrievalProvider = mock(KnowledgeRetrievalProvider.class);
-        // Mockito 不会自动调用接口 default 方法；显式桥接到二参入口，既保持旧用例语义，
-        // 也让中间件始终走带可信主体的新契约。
+        // Mockito 默认不执行接口 default 方法；使用真实兼容入口验证二参实现与可信主体传递。
         when(retrievalProvider.retrieve(anyString(), anyString(),
-            nullable(AgentInvocationIdentity.class))).thenAnswer(invocation ->
-                retrievalProvider.retrieve(invocation.getArgument(0), invocation.getArgument(1)));
+            nullable(AgentInvocationIdentity.class))).thenCallRealMethod();
+        when(retrievalProvider.retrieveResult(anyString(), anyString(),
+            nullable(AgentInvocationIdentity.class))).thenCallRealMethod();
         middleware = new KnowledgeInjectionMiddleware(retrievalProvider, AGENT_CODE);
     }
 

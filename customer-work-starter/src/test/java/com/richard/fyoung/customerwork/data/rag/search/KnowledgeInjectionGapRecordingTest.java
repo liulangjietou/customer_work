@@ -1,17 +1,20 @@
 package com.richard.fyoung.customerwork.data.rag.search;
 
+import com.richard.fyoung.customerwork.data.calllog.AgentReplayCapture;
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.middleware.ReasoningInput;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
-
-import java.util.ArrayList;
-import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -101,5 +104,54 @@ class KnowledgeInjectionGapRecordingTest {
             (agentCode, query) -> "", "agent-a");
 
         runOnce(mw, "随便问问").blockLast();
+    }
+
+    @Test
+    void explicitOutcomesShouldPreserveInjectionAndRecordOnlyOneCompletedMiss() {
+        List<KnowledgeRetrievalResult> outcomes = List.of(
+            KnowledgeRetrievalResult.completed(null), KnowledgeRetrievalResult.skipped(),
+            KnowledgeRetrievalResult.degraded(null), KnowledgeRetrievalResult.degraded("可用的部分资料"));
+        for (KnowledgeRetrievalResult result : outcomes) {
+            AtomicInteger retrievals = new AtomicInteger();
+            KnowledgeRetrievalProvider provider = new KnowledgeRetrievalProvider() {
+                @Override
+                public String retrieve(String agentCode, String query) {
+                    throw new AssertionError("中间件应读取明确的执行结果");
+                }
+
+                @Override
+                public KnowledgeRetrievalResult retrieveResult(String agentCode, String query,
+                                                               AgentInvocationIdentity identity) {
+                    retrievals.incrementAndGet();
+                    return result;
+                }
+            };
+            RecordingGapRecorder recorder = new RecordingGapRecorder();
+            KnowledgeInjectionMiddleware middleware = new KnowledgeInjectionMiddleware(provider, "agent-a", recorder);
+            RuntimeContext context = RuntimeContext.builder().userId("u1").sessionId("s1").build();
+            AgentReplayCapture capture = new AgentReplayCapture();
+            AgentReplayCapture.bind(context, capture);
+            ReasoningInput input = inputWith("如何申请退款");
+            for (int i = 0; i < 2; i++) {
+                middleware.onReasoning(null, context, input, injected -> {
+                    int expectedMessages = result.block() == null ? 1 : 2;
+                    assertEquals(expectedMessages, injected.messages().size(), result.status().name());
+                    if (result.block() != null) {
+                        assertTrue(injected.messages().get(1).getTextContent().contains(result.block()));
+                    }
+                    return Flux.empty();
+                }).blockLast(Duration.ofSeconds(5));
+            }
+            assertEquals(1, retrievals.get(), "同一轮的再次推理应复用已取得的内容");
+            assertEquals(result.status() == KnowledgeRetrievalResult.Status.MISS ? 1 : 0,
+                recorder.questions.size(), result.status().name());
+            if (result.status() == KnowledgeRetrievalResult.Status.SKIPPED) {
+                assertTrue(capture.snapshot().ragRetrievals().isEmpty(), "没有执行检索就没有检索回放事实");
+            } else {
+                assertEquals(1, capture.snapshot().ragRetrievals().size());
+                assertEquals(result.status() == KnowledgeRetrievalResult.Status.MISS ? "MISS" : "ERROR",
+                    capture.snapshot().ragRetrievals().get(0).status());
+            }
+        }
     }
 }
