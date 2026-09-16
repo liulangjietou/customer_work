@@ -8,6 +8,7 @@ import com.richard.fyoung.customerwork.data.ticket.Ticket;
 import com.richard.fyoung.customerwork.data.ticket.TicketActorType;
 import com.richard.fyoung.customerwork.data.ticket.TicketCategory;
 import com.richard.fyoung.customerwork.data.ticket.TicketService;
+import com.richard.fyoung.customerwork.data.ticket.TicketStatus;
 import com.richard.fyoung.customerwork.safety.security.UserPrincipal;
 import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
 import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContextThreadLocalAccessor;
@@ -31,12 +32,11 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.nio.charset.StandardCharsets;
+import java.util.NoSuchElementException;
 
 /**
  * 对话分发核心：把一条用户/坐席消息按工单当前状态路由到 AI 自助、人工排队提示、坐席转发或转人工。
@@ -56,8 +56,6 @@ public class ChatDispatchService {
     private static final String SESSION_DELIMITER = ":";
 
     private static final int TITLE_MAX_LEN = 50;
-    /** cw_chat_message.content 使用 MySQL TEXT，按 UTF-8 字节数控制入口。 */
-    private static final int MESSAGE_CONTENT_MAX_BYTES = 65_535;
     private static final int LOCAL_LOCK_WAIT_SECONDS = 10;
 
     private static final String HANDOFF_KEYWORD_REASON = "用户关键词触发转人工";
@@ -84,6 +82,7 @@ public class ChatDispatchService {
     private final SubjectQuotaGuard subjectQuotaGuard;
     private final SessionLock acceptanceLock;
     private final CustomerWorkTransactionExecutor transactions;
+    private final AgentMessageAcceptanceService agentReplies;
 
     /** 兼容内存嵌入式调用；短时去重器不再决定受理，生产装配注入现有锁和同库事务。 */
     public ChatDispatchService(TicketService ticketService,
@@ -102,9 +101,10 @@ public class ChatDispatchService {
                                 ChatTurnService chatTurnService, HandoffKeywordDetector keywordDetector,
                                 WsSessionRegistry registry, SubjectQuotaGuard subjectQuotaGuard,
                                 SessionLock acceptanceLock,
-                                ObjectProvider<CustomerWorkTransactionExecutor> transactions) {
+                                ObjectProvider<CustomerWorkTransactionExecutor> transactions,
+                                AgentMessageAcceptanceService agentReplies) {
         this(ticketService, chatLogService, chatTurnService, keywordDetector, registry,
-            subjectQuotaGuard, acceptanceLock, transactions.getIfAvailable(() -> CustomerWorkTransactionExecutor.DIRECT));
+            subjectQuotaGuard, acceptanceLock, transactions.getIfAvailable(() -> CustomerWorkTransactionExecutor.DIRECT), agentReplies);
     }
 
     /** 显式事务构造用于验证提交、回滚及跨实例唯一键竞争。 */
@@ -112,6 +112,16 @@ public class ChatDispatchService {
                                 ChatTurnService chatTurnService, HandoffKeywordDetector keywordDetector,
                                 WsSessionRegistry registry, SubjectQuotaGuard subjectQuotaGuard,
                                 SessionLock acceptanceLock, CustomerWorkTransactionExecutor transactions) {
+        this(ticketService, chatLogService, chatTurnService, keywordDetector, registry, subjectQuotaGuard,
+            acceptanceLock, transactions,
+            new AgentMessageAcceptanceService(ticketService, chatLogService, registry, acceptanceLock, transactions));
+    }
+
+    private ChatDispatchService(TicketService ticketService, ChatLogService chatLogService,
+                                ChatTurnService chatTurnService, HandoffKeywordDetector keywordDetector,
+                                WsSessionRegistry registry, SubjectQuotaGuard subjectQuotaGuard,
+                                SessionLock acceptanceLock, CustomerWorkTransactionExecutor transactions,
+                                AgentMessageAcceptanceService agentReplies) {
         this.ticketService = ticketService;
         this.chatLogService = chatLogService;
         this.chatTurnService = chatTurnService;
@@ -120,6 +130,7 @@ public class ChatDispatchService {
         this.subjectQuotaGuard = subjectQuotaGuard;
         this.acceptanceLock = acceptanceLock;
         this.transactions = transactions;
+        this.agentReplies = agentReplies;
     }
 
     /** 分发动作：由工单状态与关键词共同决定。 */
@@ -217,22 +228,37 @@ public class ChatDispatchService {
      * 处理一条坐席消息：校验受理归属 → 落库 → 推给用户（离线只落库不报错）。
      */
     public Mono<Void> onAgentMessage(String agentId, String ticketId, String content) {
-        return Mono.fromRunnable(() -> {
-                Ticket ticket = ticketService.find(ticketId).orElse(null);
-                if (ticket == null) {
-                    registry.pushToAgent(agentId, WsFrame.error("CHAT-TICKET-NOT-FOUND", "工单不存在: " + ticketId));
-                    return;
+        return onAgentMessage(agentId, ticketId, content, null);
+    }
+
+    /** 新客户端携带稳定标识；异步保存和回执推送都在原鉴权租户下执行。 */
+    public Mono<Void> onAgentMessage(String agentId, String ticketId, String content, String clientMsgId) {
+        return Mono.deferContextual(context -> {
+            String tenant = context.getOrDefault(TenantContextThreadLocalAccessor.KEY, TenantContext.DEFAULT);
+            return Mono.fromRunnable(() -> TenantContext.runWith(tenant, () -> {
+                try {
+                    ChatMessage saved = agentReplies.accept(agentId, ticketId, content, clientMsgId);
+                    registry.pushToAgent(agentId, WsFrame.chatAccepted(clientMsgId, saved));
+                } catch (RuntimeException error) {
+                    String code = "AGENT_REPLY_UNKNOWN";
+                    String message = "回复结果尚未确认，请核对会话记录。";
+                    String acceptance = WsFrame.ACCEPTANCE_UNKNOWN;
+                    if (error instanceof AgentMessageAcceptanceService.Rejected rejected) {
+                        code = rejected.code();
+                        message = rejected.getMessage();
+                        acceptance = WsFrame.ACCEPTANCE_REJECTED;
+                    } else if (error instanceof NoSuchElementException) {
+                        code = "CHAT-TICKET-NOT-FOUND";
+                        message = "工单不存在或已不可访问。";
+                        acceptance = WsFrame.ACCEPTANCE_REJECTED;
+                    } else {
+                        log.error("agent reply failed, errorCode={}, ticketId={}", code, ticketId, error);
+                    }
+                    registry.pushToAgent(agentId,
+                        WsFrame.agentMessageError(code, message, ticketId, clientMsgId, acceptance));
                 }
-                if (!agentId.equals(ticket.getAssignee())) {
-                    registry.pushToAgent(agentId, WsFrame.error("CHAT-NOT-ASSIGNEE", "非本坐席受理的工单，无法回复"));
-                    return;
-                }
-                ChatMessage agentMsg = chatLogService.append(
-                    ticket.getSessionId(), ticketId, TicketActorType.AGENT, agentId, content);
-                registry.pushToUser(ticket.getUserId(), WsFrame.chat(chatData(agentMsg)));
-            })
-            .subscribeOn(Schedulers.boundedElastic())
-            .then();
+            })).subscribeOn(Schedulers.boundedElastic()).then();
+        });
     }
 
     // ---- 内部 ----
@@ -243,7 +269,7 @@ public class ChatDispatchService {
         if (content == null || content.isBlank()) {
             throw new MessageRejected("CHAT_MESSAGE_EMPTY", "请输入消息或添加可解析的附件。");
         }
-        if (content.getBytes(StandardCharsets.UTF_8).length > MESSAGE_CONTENT_MAX_BYTES) {
+        if (content.getBytes(StandardCharsets.UTF_8).length > ChatLogService.MESSAGE_CONTENT_MAX_BYTES) {
             throw new MessageRejected("CHAT_MESSAGE_TOO_LARGE", "消息和附件内容过长，请缩短内容后发送。");
         }
         if (clientMsgId != null && clientMsgId.length() > ChatLogService.CLIENT_MESSAGE_ID_MAX_LENGTH) {
@@ -309,6 +335,12 @@ public class ChatDispatchService {
         Ticket ticket = ticketService.findActiveBySession(sessionId)
             .orElseGet(() -> ticketService.createForSession(sessionId, user.userId(), null, TicketCategory.CONSULT));
         String ticketId = ticket.getId();
+        // 路由与保存共用锁定快照，不能依据转派前的旧坐席继续推送消息。
+        ticket = ticketService.findForUpdate(ticketId)
+            .orElseThrow(() -> new MessageRejected("CHAT_TICKET_UNAVAILABLE", "当前工单不可用，请刷新会话。"));
+        if (ticket.getStatus() == TicketStatus.CLOSED || ticket.getStatus() == TicketStatus.RESOLVED) {
+            throw new MessageRejected("CHAT_TICKET_CLOSED", "当前工单已结束，请重新开始会话。");
+        }
         ChatMessage userMessage = messageId == null
             ? chatLogService.append(sessionId, ticketId, TicketActorType.USER, user.userId(), content)
             : chatLogService.appendWithMessageId(messageId, sessionId, ticketId, TicketActorType.USER, user.userId(), content);
@@ -342,7 +374,7 @@ public class ChatDispatchService {
             case AI_STREAM:
                 return streamAi(user, sessionId, content, ticket.getId(), clientMsgId);
             case FORWARD_AGENT:
-                registry.pushToAgent(ticket.getAssignee(), WsFrame.chat(chatData(decision.userMessage())));
+                registry.pushToAgent(ticket.getAssignee(), WsFrame.chatMessage(decision.userMessage()));
                 return Mono.empty();
             case WAITING_CONFIRM_NOTICE:
                 registry.pushToUser(userId, WsFrame.system(NOTICE_WAITING_CONFIRM, sessionId, ticket.getId()));
@@ -395,16 +427,4 @@ public class ChatDispatchService {
     }
 
     /** 由已落库消息构造 chat 帧载荷（与前端契约字段一致：messageId/sessionId/ticketId/senderType/senderId/content/ts）。 */
-    private Map<String, Object> chatData(ChatMessage message) {
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put(WsFrame.KEY_ID, message.id());
-        data.put(WsFrame.KEY_MESSAGE_ID, message.messageId());
-        data.put(WsFrame.KEY_SESSION_ID, message.sessionId());
-        data.put(WsFrame.KEY_TICKET_ID, message.ticketId());
-        data.put(WsFrame.KEY_SENDER_TYPE, message.senderType().name());
-        data.put(WsFrame.KEY_SENDER_ID, message.senderId());
-        data.put(WsFrame.KEY_CONTENT, message.content());
-        data.put(WsFrame.KEY_TS, message.createdAtMs());
-        return data;
-    }
 }

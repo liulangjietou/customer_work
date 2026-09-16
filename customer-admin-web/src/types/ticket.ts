@@ -135,6 +135,12 @@ export interface TicketPageResult {
 
 export interface TicketReplyRequest {
   content: string
+  clientMsgId: string
+}
+
+export interface TicketMessageReceipt {
+  clientMsgId: string
+  message: TicketMessageVO | null
 }
 
 export interface TicketHoldRequest {
@@ -158,10 +164,13 @@ export interface WsCredentialVO {
   wsUrl: string
   expiresAtMs: number
   agentId: string
+  tenantId: string
 }
 
 // ---------- WebSocket 帧 ----------
 export interface WsChatFrameData {
+  id?: number
+  sessionId?: string
   messageId: string
   ticketId: string
   senderType: TicketSenderType

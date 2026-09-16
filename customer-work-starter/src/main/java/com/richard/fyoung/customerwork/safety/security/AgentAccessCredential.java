@@ -14,6 +14,7 @@ import java.util.Optional;
  *
  * <p>单租户旧令牌格式：{@code agentId:expiresAtMs:signature}；多租户格式：
  * {@code agentId:tenantId:expiresAtMs:signature}。签名覆盖签名前的全部字段，租户身份不能由请求方篡改。
+ * 浏览器订阅令牌为 {@code agentId:tenantId:expiresAtMs:SUBSCRIBE:signature}，只允许实时订阅与心跳。
  * 服务端只需持有 {@code secret} 即可在无会话存储的前提下校验坐席身份与有效期，避免"客户端自报 agentId
  * 即被信任"的越权风险（对应 {@code ApprovalAuth} 把身份从客户端自报改为服务端凭 token 解析的同一思路）。</p>
  *
@@ -27,6 +28,8 @@ public final class AgentAccessCredential {
     private static final String SEPARATOR = ":";
     private static final int LEGACY_TOKEN_PARTS = 3;
     private static final int TENANT_TOKEN_PARTS = 4;
+    private static final int SUBSCRIPTION_TOKEN_PARTS = 5;
+    private static final String SUBSCRIPTION_SCOPE = "SUBSCRIBE";
 
     private AgentAccessCredential() {
     }
@@ -57,6 +60,15 @@ public final class AgentAccessCredential {
         return payload + SEPARATOR + signature;
     }
 
+    /** 浏览器只持有订阅令牌；签名覆盖用途，不能拿它绕过 Admin 权限层直接调用业务命令。 */
+    public static String signSubscription(String agentId, String tenantId, long expiresAtMs, String secret) {
+        requireTokenPart(agentId, "agentId");
+        requireTokenPart(tenantId, "tenantId");
+        String payload = agentId + SEPARATOR + TenantContext.canonicalizeTenantId(tenantId)
+            + SEPARATOR + expiresAtMs + SEPARATOR + SUBSCRIPTION_SCOPE;
+        return payload + SEPARATOR + base64Url(hmac(payload, secret));
+    }
+
     /**
      * 校验令牌：格式 → 签名（常时比较）→ 有效期，全通过返回其中的 agentId，否则 empty。
      *
@@ -75,12 +87,17 @@ public final class AgentAccessCredential {
             return Optional.empty();
         }
         String[] parts = token.split(SEPARATOR, -1);
-        if (parts.length != LEGACY_TOKEN_PARTS && parts.length != TENANT_TOKEN_PARTS) {
+        if (parts.length != LEGACY_TOKEN_PARTS && parts.length != TENANT_TOKEN_PARTS
+            && parts.length != SUBSCRIPTION_TOKEN_PARTS) {
+            return Optional.empty();
+        }
+        boolean subscriptionOnly = parts.length == SUBSCRIPTION_TOKEN_PARTS;
+        if (subscriptionOnly && !SUBSCRIPTION_SCOPE.equals(parts[3])) {
             return Optional.empty();
         }
         String agentId = parts[0];
-        String tenantId = parts.length == TENANT_TOKEN_PARTS ? parts[1] : null;
-        int expiresIndex = parts.length - 2;
+        String tenantId = parts.length >= TENANT_TOKEN_PARTS ? parts[1] : null;
+        int expiresIndex = subscriptionOnly ? 2 : parts.length - 2;
         int signatureIndex = parts.length - 1;
         long expiresAtMs;
         try {
@@ -94,9 +111,12 @@ public final class AgentAccessCredential {
         } catch (IllegalArgumentException e) {
             return Optional.empty();
         }
-        String payload = parts.length == TENANT_TOKEN_PARTS
+        String payload = parts.length >= TENANT_TOKEN_PARTS
             ? agentId + SEPARATOR + tenantId + SEPARATOR + expiresAtMs
             : agentId + SEPARATOR + expiresAtMs;
+        if (subscriptionOnly) {
+            payload += SEPARATOR + SUBSCRIPTION_SCOPE;
+        }
         byte[] expectedSignature = hmac(payload, secret);
         // 常时比较，避免按字节短路泄露签名信息
         if (!MessageDigest.isEqual(expectedSignature, providedSignature)) {
@@ -111,11 +131,12 @@ public final class AgentAccessCredential {
         if (tenantId != null && !TenantContext.isValidTenantId(tenantId)) {
             return Optional.empty();
         }
-        return Optional.of(new AgentIdentity(agentId, TenantContext.canonicalizeTenantId(tenantId)));
+        return Optional.of(new AgentIdentity(agentId, TenantContext.canonicalizeTenantId(tenantId),
+            subscriptionOnly, expiresAtMs));
     }
 
     /** 经过 HMAC 验证的坐席身份。 */
-    public record AgentIdentity(String agentId, String tenantId) {
+    public record AgentIdentity(String agentId, String tenantId, boolean subscriptionOnly, long expiresAtMs) {
     }
 
     private static void requireTokenPart(String value, String name) {

@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.data.ticket;
 
 import lombok.Getter;
+import java.util.Objects;
 
 /**
  * 客服工单（充血实体：自带完整状态机流转方法，非纯数据袋）。
@@ -110,6 +111,16 @@ public class Ticket {
         this.assignee = agentId;
         this.claimedAtMs = System.currentTimeMillis();
         touch();
+    }
+
+    /** 回复必须由当前受理坐席发出，处理和挂起状态可回复；不会隐式重新打开终态工单。 */
+    public void requireAgentReply(String agentId) {
+        if (!Objects.equals(assignee, agentId) || agentId == null) {
+            throw new SecurityException("not the assignee of this ticket");
+        }
+        if (status != TicketStatus.PROCESSING && status != TicketStatus.ON_HOLD) {
+            throw new IllegalStateException(illegal("reply"));
+        }
     }
 
     /** 挂起：PROCESSING → ON_HOLD（等待用户补料 / 第三方回复）。 */

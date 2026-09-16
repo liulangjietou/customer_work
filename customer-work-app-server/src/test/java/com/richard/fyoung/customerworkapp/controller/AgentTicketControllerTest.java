@@ -1,6 +1,9 @@
 package com.richard.fyoung.customerworkapp.controller;
 
 import com.richard.fyoung.customerwork.data.chatlog.ChatLogService;
+import com.richard.fyoung.customerworkapp.chat.AgentMessageAcceptanceService;
+import com.richard.fyoung.customerwork.infra.lock.InMemorySessionLock;
+import com.richard.fyoung.customerwork.infra.transaction.CustomerWorkTransactionExecutor;
 import com.richard.fyoung.customerwork.data.chatlog.ChatMessage;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.safety.security.AgentAccessCredential;
@@ -40,6 +43,12 @@ class AgentTicketControllerTest {
 
     @TestConfiguration
     static class Cfg {
+        @Bean
+        AgentMessageAcceptanceService agentReplies(TicketService tickets, ChatLogService chatLog, WsSessionRegistry registry) {
+            return new AgentMessageAcceptanceService(tickets, chatLog, registry,
+                new InMemorySessionLock(10), CustomerWorkTransactionExecutor.DIRECT);
+        }
+
         @Bean
         CustomerWorkProperties customerWorkProperties() {
             CustomerWorkProperties props = new CustomerWorkProperties();
@@ -85,7 +94,7 @@ class AgentTicketControllerTest {
     @Test
     void reply_shouldPersist_andOfflineUserIsNotAnError() {
         Ticket ticket = claimedTicket();
-        when(ticketService.find("TK-1")).thenReturn(Optional.of(ticket));
+        when(ticketService.findForUpdate("TK-1")).thenReturn(Optional.of(ticket));
         when(chatLogService.append(any(), eq("TK-1"), eq(TicketActorType.AGENT), eq(AGENT_ID), eq("您好")))
             .thenReturn(ChatMessage.of("MSG-1", "uU1:conv-1", "TK-1", TicketActorType.AGENT, AGENT_ID, "您好"));
         when(registry.pushToUser(eq("U1"), any())).thenReturn(false); // 用户离线

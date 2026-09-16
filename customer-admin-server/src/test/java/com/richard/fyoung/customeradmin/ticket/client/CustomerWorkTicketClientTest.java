@@ -96,6 +96,41 @@ class CustomerWorkTicketClientTest {
     }
 
     @Test
+    void replyKeepsClientIdentityAndReturnsSavedCursor() {
+        server.expect(requestTo(BASE_URL + "/api/customer/agent/tickets/TK-1/reply"))
+            .andExpect(method(HttpMethod.POST))
+            .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.content()
+                .json("{\"content\":\"原始回复\",\"clientMsgId\":\"reply-1\"}"))
+            .andRespond(withSuccess("{\"id\":31,\"messageId\":\"REQ-31\",\"content\":\"原始回复\"}", MediaType.APPLICATION_JSON));
+        TicketMessageVO saved = client.reply("TK-1", "原始回复", "reply-1");
+        assertEquals(31L, saved.getId());
+        assertEquals("REQ-31", saved.getMessageId());
+        server.verify();
+    }
+
+    @Test
+    void receiptKeepsMissingSeparateFromFailedRead() {
+        server.expect(requestTo(BASE_URL + "/api/customer/agent/tickets/TK-1/receipts/reply-1"))
+            .andRespond(withSuccess("{\"clientMsgId\":\"reply-1\",\"message\":null}", MediaType.APPLICATION_JSON));
+        org.junit.jupiter.api.Assertions.assertNull(client.receipt("TK-1", "reply-1").message());
+        server.verify();
+        server.reset();
+        server.expect(requestTo(BASE_URL + "/api/customer/agent/tickets/TK-1/receipts/reply-1"))
+            .andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR));
+        assertEquals(ResultCode.CUSTOMER_WORK_UNAVAILABLE,
+            assertThrows(BizException.class, () -> client.receipt("TK-1", "reply-1")).getResultCode());
+        server.verify();
+    }
+
+    @Test
+    void replyDeniedByAssigneeGuardRemainsForbidden() {
+        server.expect(requestTo(BASE_URL + "/api/customer/agent/tickets/TK-1/reply"))
+            .andRespond(withStatus(HttpStatus.FORBIDDEN));
+        assertEquals(ResultCode.FORBIDDEN,
+            assertThrows(BizException.class, () -> client.reply("TK-1", "hello", "reply-1")).getResultCode());
+    }
+
+    @Test
     void pageOrders_shouldParse200Body() {
         server.expect(requestTo(containsString("/api/customer/agent/orders?")))
             .andExpect(method(HttpMethod.GET))

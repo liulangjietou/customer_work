@@ -198,12 +198,13 @@ const API_FIXTURES: readonly ApiFixture[] = [
   {
     method: 'GET',
     path: '/ticket/ws-credential',
-    value: {
+    value: () => ({
       token: 'fixture-ticket-token',
       wsUrl: LOGIN_E2E_ORIGIN.replace(/^http/, 'ws') + '/fixture-ticket',
-      expiresAtMs: FIXED_TIMESTAMP + 60_000,
+      expiresAtMs: Date.now() + 60_000,
       agentId: 'fixture-agent',
-    },
+      tenantId: 'default',
+    }),
   },
   { method: 'GET', path: '/ticket/orders/page', value: { total: 0, items: [] } },
   { method: 'GET', path: '/workspace/project', value: [] },

@@ -13,6 +13,7 @@ import com.richard.fyoung.customeradmin.ticket.dto.TicketPageQuery;
 import com.richard.fyoung.customeradmin.ticket.dto.TicketPageResult;
 import com.richard.fyoung.customeradmin.ticket.dto.TicketPriorityRequest;
 import com.richard.fyoung.customeradmin.ticket.dto.TicketReplyRequest;
+import com.richard.fyoung.customeradmin.ticket.dto.TicketMessageReceiptVO;
 import com.richard.fyoung.customeradmin.ticket.dto.TicketResolveRequest;
 import com.richard.fyoung.customeradmin.ticket.dto.TicketResumeRequest;
 import com.richard.fyoung.customeradmin.ticket.dto.TicketTransferRequest;
@@ -83,9 +84,15 @@ public class UserTicketController {
     @SaCheckPermission("user-ticket:reply")
     @OperationLog(operation = "回复工单", target = TARGET)
     @PostMapping("/{id}/reply")
-    public Result<Void> reply(@PathVariable String id, @Valid @RequestBody TicketReplyRequest request) {
-        ticketService.reply(id, request.content());
-        return Result.success();
+    public Result<TicketMessageVO> reply(@PathVariable String id, @Valid @RequestBody TicketReplyRequest request) {
+        return Result.success(ticketService.reply(id, request.content(), request.clientMsgId()));
+    }
+
+    /** 回执只提供已有消息视图，不赋予发送权限；调用端和客服服务仍校验当前租户与本人身份。 */
+    @SaCheckPermission("user-ticket:view")
+    @GetMapping("/{id}/receipts/{clientMsgId}")
+    public Result<TicketMessageReceiptVO> receipt(@PathVariable String id, @PathVariable String clientMsgId) {
+        return Result.success(ticketService.receipt(id, clientMsgId));
     }
 
     @SaCheckPermission("user-ticket:edit")

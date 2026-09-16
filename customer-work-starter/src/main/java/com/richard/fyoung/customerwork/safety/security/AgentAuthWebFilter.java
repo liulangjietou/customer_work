@@ -59,6 +59,9 @@ public class AgentAuthWebFilter implements WebFilter {
             return AuthResponses.unauthorized(exchange, "invalid or expired agent token");
         }
         AgentIdentity authenticated = identity.get();
+        if (authenticated.subscriptionOnly()) {
+            return AuthResponses.forbidden(exchange, "subscription credential cannot access agent HTTP APIs");
+        }
         exchange.getAttributes().put(AGENT_ID_ATTR, authenticated.agentId());
         if (!properties.getTenant().isEnabled()) {
             return chain.filter(exchange);

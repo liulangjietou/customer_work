@@ -34,6 +34,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doCallRealMethod;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -61,6 +62,7 @@ class ChatMessageAcceptanceTest {
     void setUp() {
         when(tickets.findActiveBySession(anyString())).thenAnswer(call -> Optional.of(
             Ticket.create("TK-1", call.getArgument(0), "U1", null, TicketCategory.CONSULT)));
+        doAnswer(call -> tickets.findActiveBySession(SESSION)).when(tickets).findForUpdate(anyString());
         when(quota.check(any(), any())).thenReturn(SubjectQuotaDecision.allow());
         when(turns.stream(anyString(), anyString(), anyString())).thenReturn(Flux.empty());
         dispatch = newDispatch();

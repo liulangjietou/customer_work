@@ -26,6 +26,11 @@ public interface TicketStore {
     /** 按工单号查找。 */
     Optional<Ticket> find(String id);
 
+    /** 事务内锁定工单快照，避免回复受理与转派、结案交叉；JDBC 实现持有行锁至事务结束。 */
+    default Optional<Ticket> findForUpdate(String id) {
+        return find(id);
+    }
+
     /** 查该会话的活跃工单（非 CLOSED 且非 RESOLVED 的最新一张，用于建单幂等与转人工定位）。 */
     Optional<Ticket> findActiveBySession(String sessionId);
 
