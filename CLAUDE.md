@@ -76,6 +76,9 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
 - **依赖版本变更后必须 `clean`**：增量编译不检测 classpath 变化，会误报编译成功。
 - **跳过 jacoco 用 `-Djacoco.skip=true`**（不是 `jacoco.check.skip`，那个对本项目的绑定无效）。
 - `customer-admin-server` 测试需要 `export ADMIN_MYSQL_PASSWORD=root`（yml 默认值与本机不符时）。
+- 轮播图片实际存取验收需要本机 MinIO（默认 `127.0.0.1:9000`，测试凭据 `minioadmin`；可用
+  `MINIO_ENDPOINT/MINIO_ACCESS_KEY/MINIO_SECRET_KEY` 覆盖）。测试只创建和清理随机独占桶；CI
+  自动启动与项目 compose 同版本的 MinIO 并等待健康检查，不把对象存储不可达当成通过或跳过。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
   （2026-09-10 MCP 契约漂移 + 编排拓扑可配批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1911/6 skip、app-server 137、customer-channel 82、admin 1751/1 skip、gateway 1，

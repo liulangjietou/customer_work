@@ -1,23 +1,33 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import {
   createWorkbenchToken,
   listWorkbenchTokens,
   revokeWorkbenchToken,
 } from '@/api/workbench'
 import { copyText } from '@/views/system/devtools/composables/useCopy'
+import CrudLoadState from '@/components/CrudLoadState.vue'
+import { useQueryState } from '@/composables/useQueryState'
+import { useRowMutation } from '@/composables/useRowMutation'
+import { useAuthStore } from '@/store/auth'
 import type { WorkbenchTokenVO } from '@/types/api'
 
 const visible = defineModel<boolean>('visible', { required: true })
 
-const loading = ref(false)
-const tokens = ref<WorkbenchTokenVO[]>([])
+const auth = useAuthStore()
+const { data: tokens, loading, error: loadError, load: loadTokens, reset: resetTokens } = useQueryState(
+  listWorkbenchTokens, () => [] as WorkbenchTokenVO[],
+)
+const creations = useRowMutation('workbench-site:view')
+const revocations = useRowMutation('workbench-site:view')
+let panelGeneration = 0
 
 // 新建令牌表单
 const createFormVisible = ref(false)
 const createName = ref('')
 const createExpireDays = ref<number | null>(90)
-const creating = ref(false)
+const createGeneration = ref(0)
+const creating = computed(() => creations.isPending(createGeneration.value))
 
 // 一次性明文令牌展示
 const plaintextToken = ref('')
@@ -28,14 +38,14 @@ const EXPIRE_OPTIONS = [
   { label: '永不过期', value: null },
 ]
 
-async function loadTokens() {
-  loading.value = true
-  try {
-    tokens.value = await listWorkbenchTokens()
-  } finally {
-    loading.value = false
+watch(createFormVisible, value => {
+  createGeneration.value += 1
+  if (!value) {
+    plaintextToken.value = ''
+    createName.value = ''
+    createExpireDays.value = 90
   }
-}
+}, { flush: 'sync' })
 
 function openCreate() {
   createName.value = ''
@@ -45,25 +55,34 @@ function openCreate() {
 }
 
 async function submitCreate() {
+  if (creating.value || !createFormVisible.value || !visible.value) return
   if (!createName.value.trim()) {
     ElMessage.warning('请填写令牌用途')
     return
   }
-  creating.value = true
-  try {
-    const created = await createWorkbenchToken({ name: createName.value, expireDays: createExpireDays.value })
-    plaintextToken.value = created.token
-    await loadTokens()
-  } finally {
-    creating.value = false
-  }
+  const generation = createGeneration.value
+  const payload = { name: createName.value, expireDays: createExpireDays.value }
+  let token = ''
+  await creations.run(generation, async () => { token = (await createWorkbenchToken(payload)).token }, async () => {
+    if (createFormVisible.value && generation === createGeneration.value) plaintextToken.value = token
+    // 同身份已签发的令牌仍应出现在列表中，但旧表单不能恢复一次性明文。
+    if (visible.value) await loadTokens()
+  })
 }
 
 async function handleRevoke(row: WorkbenchTokenVO) {
-  await ElMessageBox.confirm(`确认吊销令牌「${row.name}」？使用该令牌的脚本将立即失效。`, '提示', { type: 'warning' })
-  await revokeWorkbenchToken(row.id)
-  ElMessage.success('已吊销')
-  await loadTokens()
+  const generation = panelGeneration
+  let revoked = false
+  await revocations.run(row.id, async current => {
+    await ElMessageBox.confirm(`确认吊销令牌「${row.name}」？使用该令牌的脚本将立即失效。`, '提示', { type: 'warning' })
+    if (!current() || !visible.value || generation !== panelGeneration) return
+    await revokeWorkbenchToken(row.id)
+    revoked = true
+  }, async () => {
+    if (!revoked) return
+    if (visible.value && generation === panelGeneration) ElMessage.success('已吊销')
+    if (visible.value) await loadTokens()
+  })
 }
 
 function statusOf(row: WorkbenchTokenVO): { text: string; type: 'success' | 'info' | 'danger' } {
@@ -77,10 +96,22 @@ function statusOf(row: WorkbenchTokenVO): { text: string; type: 'success' | 'inf
 }
 
 watch(visible, (v) => {
+  panelGeneration += 1
   if (v) {
-    loadTokens()
+    void loadTokens()
+  } else {
+    resetTokens()
+    createFormVisible.value = false
+    plaintextToken.value = ''
   }
-})
+}, { flush: 'sync' })
+watch([() => auth.loginGeneration, () => auth.token, () => auth.permissions.join('\0')], () => {
+  visible.value = false
+  createFormVisible.value = false
+  plaintextToken.value = ''
+  createName.value = ''
+  panelGeneration += 1
+}, { flush: 'sync' })
 </script>
 
 <template>
@@ -90,7 +121,8 @@ watch(visible, (v) => {
       <el-button class="cw-final-action" type="primary" @click="openCreate">新建令牌</el-button>
     </div>
 
-    <el-table v-loading="loading" :data="tokens" style="width: 100%">
+    <CrudLoadState :error="loadError" :has-stale-data="tokens.length > 0" :loading="loading" @retry="loadTokens" />
+    <el-table v-if="!loadError || tokens.length > 0" v-loading="loading" :data="tokens" style="width: 100%">
       <el-table-column prop="name" label="用途" min-width="120" show-overflow-tooltip />
       <el-table-column prop="tokenPrefix" label="前缀" width="150">
         <template #default="{ row }">{{ row.tokenPrefix }}…</template>
@@ -108,7 +140,8 @@ watch(visible, (v) => {
       </el-table-column>
       <el-table-column label="操作" width="90" fixed="right">
         <template #default="{ row }">
-          <el-button v-if="!row.revoked" link type="danger" @click="handleRevoke(row)">吊销</el-button>
+          <el-button v-if="!row.revoked" link type="danger" :loading="revocations.isPending(row.id)"
+            :disabled="revocations.isPending(row.id)" @click="handleRevoke(row)">吊销</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -116,7 +149,7 @@ watch(visible, (v) => {
     <!-- 新建令牌子对话框 -->
     <el-dialog v-model="createFormVisible" title="新建令牌" width="520px" append-to-body>
       <!-- 主体：未生成时填表单，生成后展示一次性明文 -->
-      <el-form v-if="!plaintextToken" label-width="80px">
+      <el-form v-if="!plaintextToken" label-width="80px" :disabled="creating">
         <el-form-item label="用途" required>
           <el-input v-model="createName" placeholder="如：我的 Chrome ScriptCat" />
         </el-form-item>

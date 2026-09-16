@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import type { FormInstance, UploadFile } from 'element-plus'
 import {
   createWorkbenchSite,
@@ -10,6 +10,9 @@ import {
   updateWorkbenchSite,
 } from '@/api/workbench'
 import { useCrudPage } from '@/composables/useCrudPage'
+import { useRowMutation } from '@/composables/useRowMutation'
+import { useAuthSubmissionScope } from '@/composables/useAuthSubmissionScope'
+import { useAuthStore } from '@/store/auth'
 import CrudLoadState from '@/components/CrudLoadState.vue'
 import { copyText } from '@/views/system/devtools/composables/useCopy'
 import { parseUserscript } from '@/utils/scriptImport'
@@ -20,7 +23,10 @@ import type { PageQuery, WorkbenchSiteSaveRequest, WorkbenchSiteVO } from '@/typ
 const URL_PATTERN = /^https?:\/\/.+/
 
 const formRef = ref<FormInstance>()
-const secretLoadingId = ref<number | null>(null)
+const auth = useAuthStore()
+const captureSubmission = useAuthSubmissionScope()
+const secretReads = useRowMutation('workbench-site:view')
+const scriptWrites = useRowMutation('workbench-site:view')
 
 const {
   loading, loadError, submitting, deletingId, list, total, query,
@@ -55,15 +61,9 @@ function openSite(row: WorkbenchSiteVO) {
 
 /** 复制明文密码：先向后端换取解密后的明文（敏感读接口），再写入剪贴板。 */
 async function copySecret(row: WorkbenchSiteVO) {
-  secretLoadingId.value = row.id
-  try {
-    const secret = await getWorkbenchSiteSecret(row.id)
-    await copyText(secret, '密码')
-  } catch {
-    // 错误提示已由 request.ts 拦截器统一弹出，这里不重复弹
-  } finally {
-    secretLoadingId.value = null
-  }
+  let secret = ''
+  await secretReads.run(row.id, async () => { secret = await getWorkbenchSiteSecret(row.id) },
+    () => copyText(secret, '密码'))
 }
 
 // ===== 令牌管理 =====
@@ -73,7 +73,9 @@ const tokenDialogVisible = ref(false)
 const scriptDialogVisible = ref(false)
 const scriptName = ref('')
 const scriptExpireDays = ref<number | null>(90)
-const generating = ref(false)
+const scriptGeneration = ref(0)
+const generating = computed(() => scriptWrites.isPending(scriptGeneration.value))
+watch(scriptDialogVisible, () => { scriptGeneration.value += 1 }, { flush: 'sync' })
 
 const EXPIRE_OPTIONS = [
   { label: '30 天', value: 30 },
@@ -88,32 +90,44 @@ function openScriptDialog() {
 }
 
 async function generateScript() {
+  if (generating.value || !scriptDialogVisible.value) return
   if (!scriptName.value.trim()) {
     ElMessage.warning('请填写令牌用途')
     return
   }
-  generating.value = true
-  try {
-    const script = await generateWorkbenchScript({ name: scriptName.value, expireDays: scriptExpireDays.value })
+  const generation = scriptGeneration.value
+  const payload = { name: scriptName.value, expireDays: scriptExpireDays.value }
+  let script = ''
+  await scriptWrites.run(generation, async () => { script = await generateWorkbenchScript(payload) }, () => {
+    if (!scriptDialogVisible.value || generation !== scriptGeneration.value) return
     // Blob 触发浏览器下载 .user.js
     const blob = new Blob([script], { type: 'text/javascript;charset=utf-8' })
     const link = document.createElement('a')
-    link.href = URL.createObjectURL(blob)
+    const objectUrl = URL.createObjectURL(blob)
+    link.href = objectUrl
     link.download = 'workbench-login.user.js'
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    URL.revokeObjectURL(link.href)
+    try {
+      document.body.appendChild(link)
+      link.click()
+    } finally {
+      link.remove()
+      URL.revokeObjectURL(objectUrl)
+    }
     scriptDialogVisible.value = false
     ElMessage.success('脚本已下载，请拖入 ScriptCat 安装；令牌已内嵌，请勿外传')
-  } finally {
-    generating.value = false
-  }
+  })
 }
 
 // ===== 从 ScriptCat 脚本导入预填（仅新增时）=====
 const importDialogVisible = ref(false)
 const importText = ref('')
+let fileReadGeneration = 0
+watch(importDialogVisible, () => { fileReadGeneration += 1 }, { flush: 'sync' })
+watch(dialogVisible, () => {
+  importDialogVisible.value = false
+  importText.value = ''
+  fileReadGeneration += 1
+}, { flush: 'sync' })
 
 function openImport() {
   importText.value = ''
@@ -122,13 +136,25 @@ function openImport() {
 
 /** el-upload 选中文件后读其文本填入文本框（不真正上传，纯本地解析）。 */
 async function onPickFile(file: UploadFile) {
-  if (file.raw) {
-    importText.value = await file.raw.text()
+  const raw = file.raw
+  if (!raw) return
+  const currentIdentity = captureSubmission()
+  const generation = ++fileReadGeneration
+  const originalText = importText.value
+  const current = () => currentIdentity() && generation === fileReadGeneration
+    && importDialogVisible.value && dialogVisible.value && dialogMode.value === 'create'
+  try {
+    const text = await raw.text()
+    // 后选文件、手动输入及重新打开表单都优先于旧文件的迟到读取。
+    if (current() && importText.value === originalText) importText.value = text
+  } catch {
+    if (current()) ElMessage.error('文件读取失败，请重新选择')
   }
 }
 
 /** 解析脚本并把命中的字段预填进新增表单，解析不出的留空交用户核对。 */
 function applyImport() {
+  if (!dialogVisible.value || dialogMode.value !== 'create' || submitting.value) return
   if (!importText.value.trim()) {
     ElMessage.warning('请粘贴脚本内容或选择脚本文件')
     return
@@ -147,6 +173,15 @@ function applyImport() {
   ElMessage.success(`已解析 ${r.matchedCount} 项并预填，请核对后保存`)
   r.warnings.forEach((w) => ElMessage.warning(w))
 }
+
+watch([() => auth.loginGeneration, () => auth.token, () => auth.permissions.join('\0')], () => {
+  tokenDialogVisible.value = false
+  scriptDialogVisible.value = false
+  scriptName.value = ''
+  importDialogVisible.value = false
+  importText.value = ''
+  fileReadGeneration += 1
+}, { flush: 'sync' })
 
 onMounted(loadList)
 </script>
@@ -190,8 +225,8 @@ onMounted(loadList)
             <el-button
               link
               type="primary"
-              :disabled="!row.hasPassword"
-              :loading="secretLoadingId === row.id"
+              :disabled="!row.hasPassword || secretReads.isPending(row.id)"
+              :loading="secretReads.isPending(row.id)"
               @click="copySecret(row)"
             >
               复制密码
@@ -336,7 +371,7 @@ onMounted(loadList)
         title="将为你签发一个内嵌令牌的通用脚本，下载后拖入 ScriptCat 安装即可。新增站点后请重新生成覆盖安装。"
         style="margin-bottom: 12px"
       />
-      <el-form label-width="80px">
+      <el-form label-width="80px" :disabled="generating">
         <el-form-item label="令牌用途" required>
           <el-input v-model="scriptName" placeholder="如：我的 Chrome ScriptCat" />
         </el-form-item>
