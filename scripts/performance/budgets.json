@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "referenceRun": "customer-performance-measure-20260916-first",
+  "referenceEnvironment": "MacBookPro18,2 / 10 CPU cores / 64 GiB RAM / macOS 26.6 / desktop Chrome",
+  "dataset": {
+    "ownRows": 10000,
+    "otherRows": 500,
+    "pageSize": 20,
+    "messagesPerConversation": 200
+  },
+  "warmups": 10,
+  "samples": 50,
+  "viewportWidths": [390, 1680],
+  "p95Ms": {
+    "queue-page": 150,
+    "queue-assignee-filter": 150,
+    "conversation-switch-200": 200,
+    "sql-query": 50
+  },
+  "scrollFrameP95Ms": 20,
+  "scrollFramesOver50Ratio": 0.01,
+  "maxLongTaskMs": 100
+}

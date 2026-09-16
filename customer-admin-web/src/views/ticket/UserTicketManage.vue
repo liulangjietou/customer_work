@@ -125,6 +125,20 @@ function selectScope(value: string) {
   query.status = value === 'waiting' ? 'WAITING_AGENT' : ''
   void handleSearch()
 }
+
+function changeQueuePage(page: number) {
+  if (query.pageNum === page) return
+  query.pageNum = page
+  void loadList()
+}
+
+/** 页大小属于队列查询，回到首页时保留当前会话及其草稿。 */
+function changeQueuePageSize(size: number) {
+  if (query.pageSize === size) return
+  query.pageSize = size
+  query.pageNum = 1
+  void loadList()
+}
 function openChat(id: string) {
   activeTicketId.value = id
 }
@@ -297,13 +311,15 @@ onScopeDispose(() => {
         </div>
         <div class="queue-pagination">
           <el-pagination
-            v-model:current-page="query.pageNum"
+            :current-page="query.pageNum"
             :page-size="query.pageSize"
+            :page-sizes="[10, 20, 50]"
             :total="total"
-            layout="prev, pager, next"
+            layout="sizes, prev, pager, next"
             :pager-count="5"
-            small
-            @current-change="loadList"
+            size="small"
+            @update:current-page="changeQueuePage"
+            @update:page-size="changeQueuePageSize"
           />
           <p>切换工单保留草稿和阅读位置</p>
         </div>
@@ -531,6 +547,11 @@ onScopeDispose(() => {
   font-size: 11px;
   margin: 0;
   color: var(--cw-text-muted);
+}
+.queue-pagination :deep(.el-pagination) {
+  flex-wrap: wrap;
+  justify-content: center;
+  row-gap: 8px;
 }
 .queue-empty {
   padding: 46px 20px;
