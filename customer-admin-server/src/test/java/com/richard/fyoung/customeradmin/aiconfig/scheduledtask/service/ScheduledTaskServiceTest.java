@@ -21,6 +21,7 @@ import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
+import io.agentscope.harness.agent.HarnessAgent;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,11 +29,13 @@ import org.springframework.context.ApplicationEventPublisher;
 import reactor.core.publisher.Mono;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -51,6 +54,7 @@ class ScheduledTaskServiceTest {
     private AiScheduledTaskRunMapper runMapper;
     private AiAgentMapper agentMapper;
     private AdminAgentInstanceFactory agentInstanceFactory;
+    private AdminScheduledTaskProperties properties;
     private ScheduledTaskService service;
     private ReActAgent runtimeAgent;
 
@@ -61,7 +65,7 @@ class ScheduledTaskServiceTest {
         runMapper = mock(AiScheduledTaskRunMapper.class);
         agentMapper = mock(AiAgentMapper.class);
         agentInstanceFactory = mock(AdminAgentInstanceFactory.class);
-        AdminScheduledTaskProperties properties = new AdminScheduledTaskProperties();
+        properties = new AdminScheduledTaskProperties();
         AdminSchedulerProperties schedulerProperties = new AdminSchedulerProperties();
         ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
         service = new ScheduledTaskService(taskMapper, runMapper, agentMapper, agentInstanceFactory,
@@ -94,6 +98,54 @@ class ScheduledTaskServiceTest {
         agent.setAgentCode("report-agent");
         agent.setStatus(1);
         return agent;
+    }
+
+    @Test
+    void execute_shouldCloseOwnedHarnessAfterSuccess() {
+        Msg reply = Msg.builder().role(MsgRole.ASSISTANT)
+            .content(TextBlock.builder().text("验收结果").build()).build();
+        HarnessAgent harness = harnessReturning(Mono.just(reply));
+
+        AiScheduledTaskRun run = service.execute("daily-report", ScheduledTaskService.TRIGGER_TYPE_MANUAL);
+
+        assertEquals(ScheduledTaskService.STATUS_SUCCESS, run.getStatus());
+        assertEquals("验收结果", run.getOutput());
+        verify(harness).close();
+        verify(runMapper).insert(run);
+    }
+
+    @Test
+    void execute_shouldCloseOwnedHarnessAfterModelFailure() {
+        HarnessAgent harness = harnessReturning(Mono.error(new IllegalStateException("model unavailable")));
+
+        AiScheduledTaskRun run = service.execute("daily-report", ScheduledTaskService.TRIGGER_TYPE_MANUAL);
+
+        assertEquals(ScheduledTaskService.STATUS_FAILED, run.getStatus());
+        verify(harness).close();
+        verify(runMapper).insert(run);
+    }
+
+    @Test
+    void execute_shouldCancelAndCloseOwnedHarnessAfterTimeout() {
+        properties.setExecuteTimeoutSeconds(1);
+        AtomicBoolean cancelled = new AtomicBoolean();
+        HarnessAgent harness = harnessReturning(Mono.<Msg>never().doOnCancel(() -> cancelled.set(true)));
+
+        AiScheduledTaskRun run = service.execute("daily-report", ScheduledTaskService.TRIGGER_TYPE_MANUAL);
+
+        assertEquals(ScheduledTaskService.STATUS_FAILED, run.getStatus());
+        assertTrue(cancelled.get());
+        verify(harness).close();
+        verify(runMapper).insert(run);
+    }
+
+    private HarnessAgent harnessReturning(Mono<Msg> reply) {
+        when(taskMapper.selectOne(any())).thenReturn(enabledTask());
+        when(agentMapper.selectById(10L)).thenReturn(enabledAgent());
+        HarnessAgent harness = mock(HarnessAgent.class);
+        when(agentInstanceFactory.build("report-agent")).thenReturn(harness);
+        when(harness.call(any(List.class), any(RuntimeContext.class))).thenReturn(reply);
+        return harness;
     }
 
     @Test

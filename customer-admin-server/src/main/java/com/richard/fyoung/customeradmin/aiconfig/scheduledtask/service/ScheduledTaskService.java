@@ -244,15 +244,18 @@ public class ScheduledTaskService {
         AgentInvocationIdentity identity = scheduledInvocationIdentity(task, agent, sessionId);
         return AgentInvocationIdentityContext.callWith(identity, () -> {
             Agent runtimeAgent = agentInstanceFactory.build(agent.getAgentCode());
-            RuntimeContext ctx = agentInstanceFactory.contextFor(agent.getAgentCode(), sessionId);
-            Msg userMsg = Msg.builder()
-                .role(MsgRole.USER)
-                .name("user")
-                .content(TextBlock.builder().text(task.getPrompt()).build())
-                .build();
-            Msg reply = callWithContext(runtimeAgent, List.of(userMsg), ctx)
-                .block(Duration.ofSeconds(properties.getExecuteTimeoutSeconds()));
-            return reply == null ? null : reply.getTextContent();
+            // 本次执行独占新建实例；成功、失败和超时都释放 Harness 的后台线程与记忆资源。
+            try (HarnessAgent owned = runtimeAgent instanceof HarnessAgent harness ? harness : null) {
+                RuntimeContext ctx = agentInstanceFactory.contextFor(agent.getAgentCode(), sessionId);
+                Msg userMsg = Msg.builder()
+                    .role(MsgRole.USER)
+                    .name("user")
+                    .content(TextBlock.builder().text(task.getPrompt()).build())
+                    .build();
+                Msg reply = callWithContext(runtimeAgent, List.of(userMsg), ctx)
+                    .block(Duration.ofSeconds(properties.getExecuteTimeoutSeconds()));
+                return reply == null ? null : reply.getTextContent();
+            }
         });
     }
 

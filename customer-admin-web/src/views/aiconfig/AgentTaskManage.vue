@@ -1,13 +1,17 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { cancelAgentTask, getAgentTask, listAgentTaskStatuses, pageAgentTasks } from '@/api/agent-task'
 import { usePagedList } from '@/composables/usePagedList'
+import { useQueryState } from '@/composables/useQueryState'
+import { useRowMutation } from '@/composables/useRowMutation'
+import { useAuthStore } from '@/store/auth'
 import CrudLoadState from '@/components/CrudLoadState.vue'
 import type { AgentTaskStatus, AgentTaskVO } from '@/types/api'
 
 /** 非终态任务的列表自动刷新间隔：任务是分钟级的长活儿，5 秒足够跟上进度又不至于打爆接口。 */
 const AUTO_REFRESH_MS = 5000
+const auth = useAuthStore()
 
 const { loading, loadError, list, total, query, loadList: loadListBase } = usePagedList({
   page: async ({ pageNum, pageSize, ...filters }) => {
@@ -20,8 +24,9 @@ const statusOptions = ref<string[]>([])
 const silentRefreshing = ref(false)
 
 const detailVisible = ref(false)
-const detailLoading = ref(false)
-const detail = ref<AgentTaskVO | null>(null)
+const detailTarget = ref<string | null>(null)
+const { data: detail, loading: detailLoading, error: detailError, load: loadDetail, reset: resetDetail } =
+  useQueryState<AgentTaskVO | null>(() => getAgentTask(detailTarget.value!), () => null)
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
@@ -52,25 +57,30 @@ function handleReset() {
 }
 
 async function openDetail(row: AgentTaskVO) {
+  resetDetail()
+  detailTarget.value = row.taskId
   detailVisible.value = true
-  detailLoading.value = true
-  detail.value = null
-  try {
-    detail.value = await getAgentTask(row.taskId)
-  } finally {
-    detailLoading.value = false
-  }
+  await loadDetail()
 }
+watch(detailVisible, visible => {
+  if (!visible) { resetDetail(); detailTarget.value = null }
+}, { flush: 'sync' })
+watch([() => auth.loginGeneration, () => auth.token, () => auth.permissions.join('\0')], () => {
+  detailVisible.value = false
+})
 
+const cancellation = useRowMutation<string>('agent-task:cancel')
 async function handleCancel(row: AgentTaskVO) {
-  await ElMessageBox.confirm(
-    '取消后任务会尽快中断，已经产生的部分结果不会保留。确认取消？',
-    '取消任务',
-    { type: 'warning' },
-  )
-  await cancelAgentTask(row.taskId)
-  ElMessage.success('已请求取消')
-  loadList()
+  await cancellation.run(row.taskId, async isCurrent => {
+    await ElMessageBox.confirm(
+      '取消后任务会尽快中断，已经产生的部分结果不会保留。确认取消？',
+      '取消任务', { type: 'warning' },
+    )
+    if (isCurrent()) await cancelAgentTask(row.taskId)
+  }, async () => {
+    ElMessage.success('已请求取消')
+    await loadList()
+  })
 }
 
 function statusTagType(status: AgentTaskStatus) {
@@ -177,7 +187,8 @@ onBeforeUnmount(() => {
               v-permission="'agent-task:cancel'"
               link
               type="danger"
-              :disabled="isTerminal(row.status)"
+              :disabled="isTerminal(row.status) || cancellation.isPending(row.taskId)"
+              :loading="cancellation.isPending(row.taskId)"
               @click="handleCancel(row)"
             >
               取消
@@ -200,6 +211,7 @@ onBeforeUnmount(() => {
     </el-card>
 
     <el-drawer v-model="detailVisible" title="任务详情" size="46%">
+      <CrudLoadState :error="detailError" :has-stale-data="!!detail" :loading="detailLoading" @retry="loadDetail" />
       <div v-loading="detailLoading">
         <el-descriptions v-if="detail" :column="1" border>
           <el-descriptions-item label="任务ID">{{ detail.taskId }}</el-descriptions-item>

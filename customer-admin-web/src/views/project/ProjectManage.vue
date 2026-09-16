@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useCrudPage } from '@/composables/useCrudPage'
+import { useQueryState } from '@/composables/useQueryState'
+import { useRowMutation } from '@/composables/useRowMutation'
+import { useAuthStore } from '@/store/auth'
 import CrudLoadState from '@/components/CrudLoadState.vue'
 import type { FormInstance } from 'element-plus'
 import {
@@ -15,6 +18,7 @@ import {
 import type { PageQuery, ProjectSaveRequest, ProjectSessionVO, ProjectVO } from '@/types/api'
 
 const router = useRouter()
+const auth = useAuthStore()
 
 const formRef = ref<FormInstance>()
 const {
@@ -37,36 +41,46 @@ const {
 
 // ---------- 项目详情：会话列表 ----------
 const detailVisible = ref(false)
-const detailLoading = ref(false)
 const detailProject = ref<ProjectVO | null>(null)
-const detailSessions = ref<ProjectSessionVO[]>([])
+let detailGeneration = 0
+const { data: detailSessions, loading: detailLoading, error: detailError, load: loadDetail, reset: resetDetail } =
+  useQueryState<ProjectSessionVO[]>(() => listProjectSessions(detailProject.value!.id), () => [])
 
 async function openDetail(row: ProjectVO) {
+  detailGeneration += 1
+  resetDetail()
   detailProject.value = row
   detailVisible.value = true
   await loadDetail()
 }
 
-async function loadDetail() {
-  if (!detailProject.value) return
-  detailLoading.value = true
-  try {
-    detailSessions.value = await listProjectSessions(detailProject.value.id)
-  } finally {
-    detailLoading.value = false
-  }
-}
+watch(detailVisible, visible => {
+  if (!visible) { detailGeneration += 1; resetDetail(); detailProject.value = null }
+}, { flush: 'sync' })
+watch([() => auth.loginGeneration, () => auth.token, () => auth.permissions.join('\0')], () => {
+  detailVisible.value = false
+})
 
 function openSessionInWorkspace(session: ProjectSessionVO) {
   router.push({ name: 'Workspace', params: { agentCode: session.agentCode }, query: { sessionId: session.sessionId } })
 }
 
+const removals = useRowMutation<string>('workspace')
+function sessionKey(session: ProjectSessionVO) {
+  return JSON.stringify([detailProject.value?.id, session.agentCode, session.sessionId])
+}
+
 async function handleRemoveSession(session: ProjectSessionVO) {
   if (!detailProject.value) return
-  await removeSessionFromProject(detailProject.value.id, session.agentCode, session.sessionId)
-  ElMessage.success('已移出项目')
-  await loadDetail()
-  await loadList()
+  const projectId = detailProject.value.id
+  const generation = detailGeneration
+  await removals.run(sessionKey(session), () => removeSessionFromProject(projectId, session.agentCode, session.sessionId), async () => {
+    if (generation === detailGeneration && detailVisible.value) {
+      ElMessage.success('已移出项目')
+      await loadDetail()
+    }
+    await loadList()
+  })
 }
 
 loadList()
@@ -123,7 +137,8 @@ loadList()
     </el-dialog>
 
     <el-drawer v-model="detailVisible" :title="detailProject ? `Project · ${detailProject.projectName}` : 'Project'" size="480px">
-      <el-table v-loading="detailLoading" :data="detailSessions" style="width: 100%" empty-text="还没有会话，去对话页把会话加入这个项目">
+      <CrudLoadState :error="detailError" :has-stale-data="detailSessions.length > 0" :loading="detailLoading" @retry="loadDetail" />
+      <el-table v-if="!detailError || detailSessions.length > 0" v-loading="detailLoading" :data="detailSessions" style="width: 100%" empty-text="还没有会话，去对话页把会话加入这个项目">
         <el-table-column label="会话">
           <template #default="{ row }: { row: ProjectSessionVO }">
             <template v-if="row.stale">
@@ -142,7 +157,7 @@ loadList()
         <el-table-column label="操作" width="120" fixed="right">
           <template #default="{ row }: { row: ProjectSessionVO }">
             <el-button v-if="!row.stale" link type="primary" @click="openSessionInWorkspace(row)">打开</el-button>
-            <el-button link type="danger" @click="handleRemoveSession(row)">移出</el-button>
+            <el-button link type="danger" :loading="removals.isPending(sessionKey(row))" :disabled="removals.isPending(sessionKey(row))" @click="handleRemoveSession(row)">移出</el-button>
           </template>
         </el-table-column>
       </el-table>

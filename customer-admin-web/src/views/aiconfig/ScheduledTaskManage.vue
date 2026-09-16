@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useCrudPage } from '@/composables/useCrudPage'
+import { useQueryState } from '@/composables/useQueryState'
+import { useRowMutation } from '@/composables/useRowMutation'
+import { useAuthStore } from '@/store/auth'
 import CrudLoadState from '@/components/CrudLoadState.vue'
 import type { FormInstance } from 'element-plus'
 import {
@@ -16,6 +19,7 @@ import {
 import { pageAgents } from '@/api/agent'
 import type { AgentVO, PageQuery, MpPageQuery, ScheduledTaskRunVO, ScheduledTaskSaveRequest, ScheduledTaskVO, ScheduleMode } from '@/types/api'
 
+const auth = useAuthStore()
 const formRef = ref<FormInstance>()
 const {
   loading, loadError, submitting, deletingId, list, total, query, dialogVisible, dialogMode, form,
@@ -34,9 +38,12 @@ const {
   toForm: row => ({ taskCode: row.taskCode, taskName: row.taskName, agentId: row.agentId, prompt: row.prompt,
     cron: row.cron, enabled: row.enabled, remark: row.remark }),
   deleteConfirm: row => `确认删除定时任务「${row.taskName}」？`,
+  beforeSubmit: () => !agentSelectionBlocked.value,
 })
 
-const agentOptions = ref<AgentVO[]>([])
+const { data: agentOptions, loading: agentLoading, error: agentError, loaded: agentsLoaded, load: loadAgentOptions } =
+  useQueryState<AgentVO[]>(async () => (await pageAgents({ pageNum: 1, pageSize: 100 })).list, () => [])
+const agentSelectionBlocked = computed(() => agentLoading.value || !!agentError.value || !agentsLoaded.value)
 
 // 当前全局调度模式（后端在列表数据里带回）：internal=内置调度器，xxl-job=外部 XXL-JOB
 const scheduleMode = ref<ScheduleMode>('internal')
@@ -45,11 +52,6 @@ const isInternalMode = computed(() => scheduleMode.value !== 'xxl-job')
 watch(list, rows => {
   if (rows[0]?.scheduleMode) scheduleMode.value = rows[0].scheduleMode
 })
-
-async function loadAgentOptions() {
-  const result = await pageAgents({ pageNum: 1, pageSize: 100 })
-  agentOptions.value = result.list
-}
 
 // Spring cron 为 6 位（秒 分 时 日 月 周），前端只做位数粗校验拦低级错误，合法性以后端 CronExpression 校验为准
 const cronRule = {
@@ -67,52 +69,48 @@ const cronRule = {
   trigger: 'blur',
 }
 
+const toggles = useRowMutation<number>('scheduler:edit')
 async function handleToggleEnabled(row: ScheduledTaskVO, value: boolean) {
-  try {
-    if (value) {
-      await enableScheduledTask(row.id)
-      ElMessage.success('已启用')
-    } else {
-      await disableScheduledTask(row.id)
-      ElMessage.success('已停用')
-    }
+  await toggles.run(row.id, () => value ? enableScheduledTask(row.id) : disableScheduledTask(row.id), () => {
     row.enabled = value
-  } catch {
-    // 开关状态与后端不一致时，重新拉取兜底，避免界面显示与实际状态错位
-    await loadList()
-  }
+    ElMessage.success(value ? '已启用' : '已停用')
+  })
 }
 
 // ---------- 手动触发 ----------
-const triggeringId = ref<number | null>(null)
+const triggering = useRowMutation<number>('scheduler:trigger')
+let triggerGeneration = 0
 const triggerResultVisible = ref(false)
 const triggerResult = ref<ScheduledTaskRunVO | null>(null)
 
 async function handleTrigger(row: ScheduledTaskVO) {
-  await ElMessageBox.confirm(
-    `确认手动触发任务「${row.taskName}」？该操作会同步调用智能体执行，可能耗时较长（分钟级），请耐心等待。`,
-    '手动触发',
-    { type: 'warning' },
-  )
-  triggeringId.value = row.id
-  try {
-    triggerResult.value = await triggerScheduledTask(row.id)
+  if (triggering.isPending(row.id)) return
+  const generation = ++triggerGeneration
+  let result: ScheduledTaskRunVO | null = null
+  await triggering.run(row.id, async isCurrent => {
+    await ElMessageBox.confirm(
+      `确认手动触发任务「${row.taskName}」？该操作会同步调用智能体执行，可能耗时较长（分钟级），请耐心等待。`,
+      '手动触发', { type: 'warning' },
+    )
+    if (isCurrent()) result = await triggerScheduledTask(row.id)
+  }, () => {
+    if (generation !== triggerGeneration) return
+    triggerResult.value = result
     triggerResultVisible.value = true
-  } catch {
-    ElMessage.error('触发失败，请查看执行历史或联系管理员排查')
-  } finally {
-    triggeringId.value = null
-  }
+  })
 }
 
 // ---------- 执行历史 ----------
 const runsVisible = ref(false)
-const runsLoading = ref(false)
 const runsTaskName = ref('')
 const runsTaskId = ref<number | null>(null)
 const runsQuery = reactive<MpPageQuery>({ current: 1, size: 10 })
-const runsList = ref<ScheduledTaskRunVO[]>([])
-const runsTotal = ref(0)
+const { data: runsPage, loading: runsLoading, error: runsError, load: loadRuns, reset: resetRuns } =
+  useQueryState<{ records: ScheduledTaskRunVO[]; total: number }>(
+    () => pageScheduledTaskRuns(runsTaskId.value!, { ...runsQuery }), () => ({ records: [], total: 0 }),
+  )
+const runsList = computed(() => runsPage.value.records)
+const runsTotal = computed(() => runsPage.value.total)
 
 const triggerTypeLabel: Record<ScheduledTaskRunVO['triggerType'], string> = {
   XXL_JOB: 'XXL-JOB',
@@ -121,6 +119,7 @@ const triggerTypeLabel: Record<ScheduledTaskRunVO['triggerType'], string> = {
 }
 
 async function openRuns(row: ScheduledTaskVO) {
+  resetRuns()
   runsTaskId.value = row.id
   runsTaskName.value = row.taskName
   runsQuery.current = 1
@@ -128,17 +127,9 @@ async function openRuns(row: ScheduledTaskVO) {
   await loadRuns()
 }
 
-async function loadRuns() {
-  if (!runsTaskId.value) return
-  runsLoading.value = true
-  try {
-    const result = await pageScheduledTaskRuns(runsTaskId.value, runsQuery)
-    runsList.value = result.records
-    runsTotal.value = result.total
-  } finally {
-    runsLoading.value = false
-  }
-}
+watch(runsVisible, visible => {
+  if (!visible) { resetRuns(); runsTaskId.value = null }
+}, { flush: 'sync' })
 
 const outputVisible = ref(false)
 const outputRun = ref<ScheduledTaskRunVO | null>(null)
@@ -147,11 +138,19 @@ function openOutput(row: ScheduledTaskRunVO) {
   outputRun.value = row
   outputVisible.value = true
 }
+watch([() => auth.loginGeneration, () => auth.token, () => auth.permissions.join('\0')], () => {
+  triggerGeneration += 1
+  runsVisible.value = false
+  triggerResultVisible.value = false
+  triggerResult.value = null
+  outputVisible.value = false
+  outputRun.value = null
+  if (auth.isLoggedIn && auth.isApproved && (auth.hasPermission('scheduler:add') || auth.hasPermission('scheduler:edit'))) {
+    void loadAgentOptions()
+  }
+}, { immediate: true })
 
-onMounted(() => {
-  loadList()
-  loadAgentOptions()
-})
+onMounted(loadList)
 </script>
 
 <template>
@@ -210,6 +209,8 @@ onMounted(() => {
             <el-switch
               v-permission="'scheduler:edit'"
               :model-value="row.enabled"
+              :loading="toggles.isPending(row.id)"
+              :disabled="toggles.isPending(row.id)"
               @change="(value: string | number | boolean) => handleToggleEnabled(row, value as boolean)"
             />
           </template>
@@ -223,7 +224,8 @@ onMounted(() => {
               v-permission="'scheduler:trigger'"
               link
               type="primary"
-              :loading="triggeringId === row.id"
+              :loading="triggering.isPending(row.id)"
+              :disabled="triggering.isPending(row.id)"
               @click="handleTrigger(row)"
             >
               手动触发
@@ -246,6 +248,7 @@ onMounted(() => {
     </el-card>
 
     <el-dialog v-model="dialogVisible" :title="dialogMode === 'edit' ? '编辑定时任务' : '新建定时任务'" width="560px">
+      <CrudLoadState :error="agentError" :has-stale-data="agentOptions.length > 0" :loading="agentLoading" @retry="loadAgentOptions" />
       <el-form ref="formRef" :disabled="submitting" :model="form" label-width="90px">
         <el-form-item label="任务编码" prop="taskCode" :rules="[{ required: true, message: '请输入任务编码' }]">
           <el-input v-model="form.taskCode" :disabled="dialogMode === 'edit'" placeholder="XXL-JOB 执行器参数填这个值，建议英文+下划线" />
@@ -254,7 +257,7 @@ onMounted(() => {
           <el-input v-model="form.taskName" />
         </el-form-item>
         <el-form-item label="关联智能体" prop="agentId" :rules="[{ required: true, message: '请选择智能体' }]">
-          <el-select v-model="form.agentId" placeholder="请选择智能体" style="width: 100%">
+          <el-select v-model="form.agentId" placeholder="请选择智能体" style="width: 100%" :loading="agentLoading" :disabled="agentSelectionBlocked">
             <el-option
               v-for="agent in agentOptions"
               :key="agent.id"
@@ -287,7 +290,7 @@ onMounted(() => {
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button class="cw-final-action" type="primary" :loading="submitting" @click="handleSubmit">保存任务</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="submitting" :disabled="submitting || agentSelectionBlocked" @click="handleSubmit">保存任务</el-button>
       </template>
     </el-dialog>
 
@@ -314,7 +317,8 @@ onMounted(() => {
     </el-dialog>
 
     <el-drawer v-model="runsVisible" :title="`执行历史 · ${runsTaskName}`" size="640px">
-      <el-table v-loading="runsLoading" :data="runsList" style="width: 100%" empty-text="暂无执行记录">
+      <CrudLoadState :error="runsError" :has-stale-data="runsList.length > 0" :loading="runsLoading" @retry="loadRuns" />
+      <el-table v-if="!runsError || runsList.length > 0" v-loading="runsLoading" :data="runsList" style="width: 100%" empty-text="暂无执行记录">
         <el-table-column label="触发方式" width="100">
           <template #default="{ row }: { row: ScheduledTaskRunVO }">
             <el-tag :type="row.triggerType === 'MANUAL' ? 'warning' : 'info'" size="small">
@@ -342,6 +346,7 @@ onMounted(() => {
         </el-table-column>
       </el-table>
       <el-pagination
+        v-if="!runsError || runsList.length > 0"
         v-model:current-page="runsQuery.current"
         v-model:page-size="runsQuery.size"
         :total="runsTotal"
