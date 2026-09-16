@@ -8,6 +8,10 @@ import com.richard.fyoung.customerwork.capability.eval.MybatisEvalCaseStore;
 import com.richard.fyoung.customerwork.capability.eval.mapper.EvalCaseMapper;
 import com.richard.fyoung.customerwork.infra.gateway.CrossDbGateway;
 import com.richard.fyoung.customerwork.tool.backend.mapper.KnowledgeMapper;
+import org.springframework.aop.framework.ProxyFactory;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
+import org.springframework.transaction.interceptor.TransactionInterceptor;
 
 import java.util.List;
 
@@ -37,10 +41,18 @@ final class BadcaseGatewayFactory {
     }
 
     static BadcaseService build(CrossDbGateway gateway) {
-        return new BadcaseService(
+        BadcaseService target = new BadcaseService(
             new MybatisBadcaseStore(gateway.getMapper(BadcaseMapper.class)),
             new MybatisEvalCaseStore(gateway.getMapper(EvalCaseMapper.class)),
             null,
             gateway.getMapper(KnowledgeMapper.class));
+        // 此服务由跨库门面直接创建，必须绑定该客服数据源，不能落入后台主库事务。
+        TransactionInterceptor transactions = new TransactionInterceptor();
+        transactions.setTransactionManager(new DataSourceTransactionManager(gateway.dataSource()));
+        transactions.setTransactionAttributeSource(new AnnotationTransactionAttributeSource());
+        ProxyFactory proxy = new ProxyFactory(target);
+        proxy.setProxyTargetClass(true);
+        proxy.addAdvice(transactions);
+        return (BadcaseService) proxy.getProxy();
     }
 }

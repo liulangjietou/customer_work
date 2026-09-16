@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { usePagedList } from '@/composables/usePagedList'
 import CrudLoadState from '@/components/CrudLoadState.vue'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onScopeDispose, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import ImprovementClosurePanel from '@/components/ImprovementClosurePanel.vue'
+import { useAuthStore } from '@/store/auth'
+import { useRowMutation } from '@/composables/useRowMutation'
 import {
   adoptAsEvalCase,
   adoptAsKnowledge,
@@ -72,7 +74,18 @@ function formatTime(ms: number): string {
 
 const drawerVisible = ref(false)
 const current = ref<Badcase | null>(null)
-const submitting = ref(false)
+const auth = useAuthStore()
+const mutations = useRowMutation<string>('badcase:adopt')
+const submitting = computed(() => !!current.value && mutations.isPending(current.value.id))
+let drawerGeneration = 0
+
+watch(drawerVisible, visible => { if (!visible) drawerGeneration += 1 }, { flush: 'sync' })
+watch([() => auth.token, () => auth.loginGeneration, () => auth.permissions.join('\0')], () => {
+  drawerGeneration += 1
+  drawerVisible.value = false
+  current.value = null
+}, { flush: 'sync' })
+onScopeDispose(() => { drawerGeneration += 1 })
 
 const knowledgeFormRef = ref<FormInstance>()
 const knowledgeForm = reactive<AdoptKnowledgeRequest>({ title: '', content: '', keyword: '' })
@@ -101,6 +114,7 @@ const expectedHint = computed(() =>
 )
 
 function openDrawer(row: Badcase) {
+  drawerGeneration += 1
   current.value = row
   drawerVisible.value = true
   // 每次打开都重置：上一条的填写内容留在表单里，极易误提交到这一条上
@@ -115,34 +129,38 @@ function openDrawer(row: Badcase) {
   evalForm.category = ''
 }
 
-async function submitKnowledge() {
-  if (!current.value || !knowledgeFormRef.value) return
-  await knowledgeFormRef.value.validate()
-  submitting.value = true
-  try {
-    current.value = await adoptAsKnowledge(current.value.id, { ...knowledgeForm })
-    ElMessage.success('已补进知识库，下次遇到同类问题就能答上来了')
+/** 两种采纳共享原记录与抽屉生命周期；验证和写入期间始终持有该记录的操作锁。 */
+async function submitAdoption(formRef: FormInstance | undefined, write: (id: string) => Promise<Badcase>, message: string) {
+  const target = current.value
+  if (!target || !formRef) return
+  const generation = drawerGeneration
+  const isCurrentDrawer = () => drawerVisible.value && generation === drawerGeneration && current.value?.id === target.id
+  let result: Badcase | undefined
+  await mutations.run(target.id, async isCurrent => {
+    const valid = await formRef.validate().catch(() => false)
+    if (valid && isCurrent() && isCurrentDrawer()) result = await write(target.id)
+  }, async () => {
+    if (!result || !isCurrentDrawer()) return
+    current.value = result
+    ElMessage.success(message)
     await loadList()
-  } finally {
-    submitting.value = false
-  }
+  })
 }
 
-async function submitEvalCase() {
-  if (!current.value || !evalFormRef.value) return
-  await evalFormRef.value.validate()
-  submitting.value = true
-  try {
-    current.value = await adoptAsEvalCase(current.value.id, { ...evalForm })
-    ElMessage.success('已加入评测集，下次再答错会被评测立刻发现')
-    await loadList()
-  } finally {
-    submitting.value = false
-  }
+function submitKnowledge() {
+  const payload = { ...knowledgeForm }
+  return submitAdoption(knowledgeFormRef.value, id => adoptAsKnowledge(id, payload), '已补进知识库，下次遇到同类问题就能答上来了')
+}
+
+function submitEvalCase() {
+  const payload = { ...evalForm }
+  return submitAdoption(evalFormRef.value, id => adoptAsEvalCase(id, payload), '已加入评测集，下次再答错会被评测立刻发现')
 }
 
 async function handleIgnore(row: Badcase) {
-  try {
+  const generation = drawerGeneration
+  let completed = false
+  await mutations.run(row.id, async isCurrent => {
     const { value: reason } = await ElMessageBox.prompt(
       '忽略后仍保留记录，只是不再出现在待筛队列里。',
       '忽略这条 badcase',
@@ -152,15 +170,15 @@ async function handleIgnore(row: Badcase) {
         inputPlaceholder: '原因（可选），如"用户误触""质检误报"',
       },
     )
+    if (!isCurrent()) return
     await ignoreBadcase(row.id, reason || undefined)
+    completed = true
+  }, async () => {
+    if (!completed) return
     ElMessage.success('已忽略')
-    drawerVisible.value = false
+    if (generation === drawerGeneration && current.value?.id === row.id) drawerVisible.value = false
     await loadList()
-  } catch (error) {
-    if (error !== 'cancel') {
-      throw error
-    }
-  }
+  })
 }
 
 onMounted(loadList)
@@ -251,7 +269,8 @@ onMounted(loadList)
               v-permission="'badcase:adopt'"
               link
               type="info"
-              :disabled="row.status === 'RESOLVED'"
+              :disabled="row.status === 'RESOLVED' || mutations.isPending(row.id)"
+              :loading="mutations.isPending(row.id)"
               @click="handleIgnore(row)"
             >
               忽略
@@ -314,6 +333,7 @@ onMounted(loadList)
           <el-form
             v-else
             ref="knowledgeFormRef"
+            :disabled="submitting"
             :model="knowledgeForm"
             :rules="knowledgeRules"
             label-width="88px"
@@ -366,7 +386,7 @@ onMounted(loadList)
             title="缺少用户输入，无法转成评测用例"
             description="登记时聊天留痕不可用。开启 chat-log.store-mode=jdbc 后新产生的 badcase 才会带上下文。"
           />
-          <el-form v-else ref="evalFormRef" :model="evalForm" :rules="evalRules" label-width="88px">
+          <el-form v-else ref="evalFormRef" :model="evalForm" :rules="evalRules" :disabled="submitting" label-width="88px">
             <el-form-item label="用例编号" prop="caseId">
               <el-input v-model="evalForm.caseId" placeholder="同类型内唯一" />
             </el-form-item>
@@ -552,6 +572,11 @@ onMounted(loadList)
     margin: 6px 0 0;
   }
 
+  .badcase-review :deep(.el-drawer .el-form-item) {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
   .badcase-review :deep(.el-drawer .el-form-item__label) {
     width: 100% !important;
     justify-content: flex-start;
@@ -559,6 +584,8 @@ onMounted(loadList)
 
   .badcase-review :deep(.el-drawer .el-form-item__content) {
     margin-left: 0 !important;
+    width: 100%;
+    min-width: 0;
   }
 }
 

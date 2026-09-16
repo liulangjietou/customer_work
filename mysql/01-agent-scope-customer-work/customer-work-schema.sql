@@ -519,7 +519,7 @@ INSERT IGNORE INTO `cw_knowledge` (`tenant_id`, `keyword`, `title`, `content`, `
 -- 敏感词表（SensitiveWordFilter / cw_sensitive_word）：智能路由中控"一次拦截"词库。
 -- 种子为脱敏占位词（非真实违禁词），覆盖 BLOCK/MASK/REVIEW 三种动作与多类目。
 CREATE TABLE IF NOT EXISTS `cw_sensitive_word` (
-    `tenant_id`     VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+    `tenant_id`     VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
     `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
     `word`           VARCHAR(128) NOT NULL COMMENT '敏感词原词面',
     `category`       VARCHAR(32) NOT NULL COMMENT '类目: POLITICS/PORN/ABUSE/COMPETITOR/CUSTOM',

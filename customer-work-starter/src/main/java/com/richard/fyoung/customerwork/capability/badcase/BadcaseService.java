@@ -12,6 +12,7 @@ import com.richard.fyoung.customerwork.tool.backend.mapper.KnowledgeMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.StringUtils;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
@@ -113,9 +114,11 @@ public class BadcaseService {
      *
      * @throws IllegalStateException 知识库未走 jdbc、badcase 不存在或已采纳过时
      */
+    @Transactional
     public Badcase adoptAsKnowledge(String badcaseId, String title, String content,
                                     String keyword, String operator) {
         Badcase badcase = require(badcaseId);
+        badcase.requireKnowledgeAdoptionAvailable();
         if (knowledgeMapper == null) {
             throw new IllegalStateException(
                 "cannot adopt as knowledge: knowledge backend is not jdbc-backed");
@@ -142,18 +145,17 @@ public class BadcaseService {
      * @param expected INTENT 传期望意图（空表示期望快车道不命中）；QUALITY 传期望要点
      * @throws IllegalStateException badcase 不存在、已采纳过，或用例编号已被占用时
      */
+    @Transactional
     public Badcase adoptAsEvalCase(String badcaseId, String caseId, EvalType evalType,
                                    String expected, String category, String operator) {
         Badcase badcase = require(badcaseId);
+        badcase.requireEvaluationAdoptionAvailable();
         if (!StringUtils.hasText(badcase.getUserInput())) {
             throw new IllegalStateException(
                 "cannot adopt as eval case: user input unavailable for badcase " + badcaseId);
         }
-        // 编号冲突会静默覆盖掉一条已有用例（upsert 语义），必须提前拦
-        if (evalCaseStore.find(evalType, caseId).isPresent()) {
-            throw new IllegalStateException("eval case id already exists: " + caseId);
-        }
-        evalCaseStore.save(new PersistedEvalCase(caseId, evalType, badcase.getUserInput(),
+        // 创建由存储原子判重；先查再 upsert 会让并发采纳覆盖已获胜用例。
+        evalCaseStore.create(new PersistedEvalCase(caseId, evalType, badcase.getUserInput(),
             expected, category, EvalCaseSource.BADCASE, true, badcaseId, System.currentTimeMillis()));
 
         badcase.adoptAsEvalCase(caseId, operator, System.currentTimeMillis());
@@ -164,6 +166,7 @@ public class BadcaseService {
     }
 
     /** 忽略：噪声反馈或质检误报。 */
+    @Transactional
     public Badcase ignore(String badcaseId, String reason, String operator) {
         Badcase badcase = require(badcaseId);
         badcase.ignore(operator, reason, System.currentTimeMillis());
@@ -173,7 +176,7 @@ public class BadcaseService {
     }
 
     private Badcase require(String badcaseId) {
-        return store.find(badcaseId)
+        return store.findForUpdate(badcaseId)
             .orElseThrow(() -> new IllegalStateException("badcase not found: " + badcaseId));
     }
 

@@ -18,6 +18,9 @@ public interface BadcaseMapper extends BaseMapper<BadcaseDO> {
     /** 按主键 upsert：新建与状态流转回写共用。 */
     int upsert(BadcaseDO record);
 
+    /** 在当前事务内锁定原记录，串行处理同一 Badcase 的采纳与忽略。 */
+    BadcaseDO selectByIdForUpdate(@Param("id") String id);
+
     /** 条件查询，时间倒序。 */
     List<BadcaseDO> selectByCondition(@Param("status") String status,
                                       @Param("source") String source,

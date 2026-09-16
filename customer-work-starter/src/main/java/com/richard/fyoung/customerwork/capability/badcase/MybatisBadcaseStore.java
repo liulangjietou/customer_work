@@ -74,6 +74,13 @@ public class MybatisBadcaseStore implements BadcaseStore {
     }
 
     @Override
+    public Optional<Badcase> findForUpdate(String id) {
+        // 写入前的锁定读取不能降级为空，否则数据库故障会被误报成记录不存在。
+        BadcaseDO row = mapper.selectByIdForUpdate(id);
+        return row == null ? Optional.empty() : Optional.of(toDomain(row));
+    }
+
+    @Override
     public long count(BadcaseStatus status, BadcaseSource source) {
         try {
             return mapper.countByCondition(status == null ? null : status.name(),

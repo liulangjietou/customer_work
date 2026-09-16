@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onScopeDispose, reactive, ref, watch } from 'vue'
 import type { FormInstance } from 'element-plus'
 import {
   createSqlDefine,
@@ -18,6 +18,9 @@ import {
   updateSqlFieldTransform,
 } from '@/api/sql'
 import { useCrudPage } from '@/composables/useCrudPage'
+import { useQueryState } from '@/composables/useQueryState'
+import { useRowMutation } from '@/composables/useRowMutation'
+import { useAuthStore } from '@/store/auth'
 import CrudLoadState from '@/components/CrudLoadState.vue'
 import type {
   PageQuery,
@@ -44,11 +47,12 @@ const TRANSFORM_TYPE_OPTIONS: { label: string; value: SqlTransformType }[] = [
 /** DATETIME 参数常用日期格式预设（下拉可手输其他合法 Java 格式串）。 */
 const DATE_FORMAT_OPTIONS = ['yyyy-MM-dd HH:mm:ss', 'yyyy-MM-dd']
 
-const datasourceOptions = ref<SqlDatasourceVO[]>([])
-
-async function loadDatasourceOptions() {
-  datasourceOptions.value = await listAllSqlDatasources()
-}
+const auth = useAuthStore()
+const children = useRowMutation<string>('sql-define:edit')
+const copies = useRowMutation<number>('sql-define:add')
+const { data: datasourceOptions, loading: datasourceLoading, error: datasourceError, loaded: datasourcesLoaded, load: loadDatasourceOptions } =
+  useQueryState<SqlDatasourceVO[]>(listAllSqlDatasources, () => [])
+const datasourceBlocked = computed(() => datasourceLoading.value || !!datasourceError.value || !datasourcesLoaded.value)
 
 // ---------- 新建/编辑（抽屉） ----------
 const formRef = ref<FormInstance>()
@@ -73,43 +77,46 @@ const {
     querySql: row.querySql, countSql: row.countSql, autoLoad: row.autoLoad, enabled: row.enabled, remark: row.remark,
   }),
   deleteConfirm: (row) => `确认删除 SQL 定义「${row.defineKey}」？关联的参数与列转换器会一并删除。`,
+  beforeSubmit: () => !datasourceBlocked.value,
 })
 
 async function handleCopy(row: SqlDefineVO) {
-  await ElMessageBox.confirm(`确认复制 SQL 定义「${row.defineKey}」？会连同参数与列转换器一起复制一份。`, '提示', { type: 'info' })
-  await copySqlDefine(row.id)
-  ElMessage.success('复制成功')
-  await loadList()
+  let completed = false
+  await copies.run(row.id, async isCurrent => {
+    await ElMessageBox.confirm(`确认复制 SQL 定义「${row.defineKey}」？会连同参数与列转换器一起复制一份。`, '提示', { type: 'info' })
+    if (!isCurrent()) return
+    await copySqlDefine(row.id)
+    completed = true
+  }, async () => {
+    if (!completed) return
+    ElMessage.success('复制成功')
+    await loadList()
+  })
 }
 
 // ---------- 参数配置 ----------
 const paramsDialogVisible = ref(false)
-const paramsLoading = ref(false)
 const paramsDefineId = ref<number | null>(null)
 const paramsDefineKey = ref('')
-const paramsList = ref<SqlDefineParamVO[]>([])
+let paramsGeneration = 0
+const { data: paramsList, loading: paramsLoading, error: paramsError, load: loadParams, reset: resetParams } =
+  useQueryState<SqlDefineParamVO[]>(() => paramsDefineId.value == null ? Promise.resolve([]) : listSqlDefineParams(paramsDefineId.value), () => [])
 
 async function openParams(row: SqlDefineVO) {
+  paramsGeneration += 1
+  resetParams()
+  paramFormVisible.value = false
   paramsDefineId.value = row.id
   paramsDefineKey.value = row.defineKey
   paramsDialogVisible.value = true
   await loadParams()
 }
 
-async function loadParams() {
-  if (!paramsDefineId.value) return
-  paramsLoading.value = true
-  try {
-    paramsList.value = await listSqlDefineParams(paramsDefineId.value)
-  } finally {
-    paramsLoading.value = false
-  }
-}
-
 const paramFormVisible = ref(false)
 const paramFormRef = ref<FormInstance>()
 const editingParamId = ref<number | null>(null)
-const paramSubmitting = ref(false)
+const paramFormGeneration = ref(0)
+const paramSubmitting = computed(() => children.isPending(`param-form:${paramFormGeneration.value}`))
 const paramForm = reactive<SqlDefineParamSaveRequest>({
   paramName: '', paramDesc: '', paramType: 'STRING', dateFormat: '', required: false,
   defaultValue: '', dropDown: '', isPageNum: false, isPageSize: false, sort: 0,
@@ -123,12 +130,14 @@ function resetParamForm() {
 }
 
 function openParamCreate() {
+  paramFormGeneration.value += 1
   editingParamId.value = null
   resetParamForm()
   paramFormVisible.value = true
 }
 
 function openParamEdit(row: SqlDefineParamVO) {
+  paramFormGeneration.value += 1
   editingParamId.value = row.id
   Object.assign(paramForm, {
     paramName: row.paramName, paramDesc: row.paramDesc, paramType: row.paramType, dateFormat: row.dateFormat ?? '', required: row.required,
@@ -138,67 +147,72 @@ function openParamEdit(row: SqlDefineParamVO) {
 }
 
 async function handleParamSubmit() {
-  if (paramSubmitting.value) return
-  paramSubmitting.value = true
-  try {
+  const parentId = paramsDefineId.value
+  const editingId = editingParamId.value
+  const generation = paramFormGeneration.value
+  if (parentId == null || paramsLoading.value || paramsError.value) return
+  const payload = { ...paramForm, dateFormat: paramForm.paramType === 'DATETIME' ? paramForm.dateFormat : '' }
+  const isCurrentForm = () => paramsDialogVisible.value && paramFormVisible.value
+    && paramsDefineId.value === parentId && paramFormGeneration.value === generation
+  let completed = false
+  await children.run(`param-form:${generation}`, async isCurrent => {
     const valid = await paramFormRef.value?.validate().catch(() => false)
-    if (!valid || !paramsDefineId.value) {
-      return
-    }
-    // 日期格式仅 DATETIME 类型有意义，类型切走后清空，避免后端校验拒绝
-    if (paramForm.paramType !== 'DATETIME') {
-      paramForm.dateFormat = ''
-    }
-    if (editingParamId.value) {
-      await updateSqlDefineParam(paramsDefineId.value, editingParamId.value, paramForm)
-      ElMessage.success('保存成功')
+    if (!valid || !isCurrent() || !isCurrentForm()) return
+    if (editingId != null) {
+      await updateSqlDefineParam(parentId, editingId, payload)
     } else {
-      await createSqlDefineParam(paramsDefineId.value, paramForm)
-      ElMessage.success('新增成功')
+      await createSqlDefineParam(parentId, payload)
     }
+    completed = true
+  }, async () => {
+    if (!completed || !isCurrentForm()) return
+    ElMessage.success(editingId == null ? '新增成功' : '保存成功')
     paramFormVisible.value = false
     await loadParams()
-  } finally {
-    paramSubmitting.value = false
-  }
+  })
 }
 
 async function handleParamDelete(row: SqlDefineParamVO) {
-  if (!paramsDefineId.value) return
-  await ElMessageBox.confirm(`确认删除参数「${row.paramName}」？`, '提示', { type: 'warning' })
-  await deleteSqlDefineParam(paramsDefineId.value, row.id)
-  ElMessage.success('删除成功')
-  await loadParams()
+  const parentId = paramsDefineId.value
+  const generation = paramsGeneration
+  if (parentId == null) return
+  const isCurrentParent = () => paramsDialogVisible.value && parentId === paramsDefineId.value && generation === paramsGeneration
+  let completed = false
+  await children.run(`param-delete:${parentId}:${row.id}`, async isCurrent => {
+    await ElMessageBox.confirm(`确认删除参数「${row.paramName}」？`, '提示', { type: 'warning' })
+    if (!isCurrent() || !isCurrentParent()) return
+    await deleteSqlDefineParam(parentId, row.id)
+    completed = true
+  }, async () => {
+    if (!completed || !isCurrentParent()) return
+    ElMessage.success('删除成功')
+    await loadParams()
+  })
 }
 
 // ---------- 列转换器 ----------
 const transformsDialogVisible = ref(false)
-const transformsLoading = ref(false)
 const transformsDefineId = ref<number | null>(null)
 const transformsDefineKey = ref('')
-const transformsList = ref<SqlFieldTransformVO[]>([])
+let transformsGeneration = 0
+const { data: transformsList, loading: transformsLoading, error: transformsError, load: loadTransforms, reset: resetTransforms } =
+  useQueryState<SqlFieldTransformVO[]>(() => transformsDefineId.value == null ? Promise.resolve([]) : listSqlFieldTransforms(transformsDefineId.value), () => [])
 
 async function openTransforms(row: SqlDefineVO) {
+  transformsGeneration += 1
+  resetTransforms()
+  transformFormVisible.value = false
   transformsDefineId.value = row.id
   transformsDefineKey.value = row.defineKey
   transformsDialogVisible.value = true
   await loadTransforms()
 }
 
-async function loadTransforms() {
-  if (!transformsDefineId.value) return
-  transformsLoading.value = true
-  try {
-    transformsList.value = await listSqlFieldTransforms(transformsDefineId.value)
-  } finally {
-    transformsLoading.value = false
-  }
-}
-
 const transformFormVisible = ref(false)
 const transformFormRef = ref<FormInstance>()
 const editingTransformId = ref<number | null>(null)
-const transformSubmitting = ref(false)
+const transformFormGeneration = ref(0)
+const transformSubmitting = computed(() => children.isPending(`transform-form:${transformFormGeneration.value}`))
 const transformForm = reactive<SqlFieldTransformSaveRequest>({
   fieldName: '', transformType: 'DATE_FORMAT', transformConfig: '',
 })
@@ -208,12 +222,14 @@ function resetTransformForm() {
 }
 
 function openTransformCreate() {
+  transformFormGeneration.value += 1
   editingTransformId.value = null
   resetTransformForm()
   transformFormVisible.value = true
 }
 
 function openTransformEdit(row: SqlFieldTransformVO) {
+  transformFormGeneration.value += 1
   editingTransformId.value = row.id
   Object.assign(transformForm, { fieldName: row.fieldName, transformType: row.transformType, transformConfig: row.transformConfig })
   transformFormVisible.value = true
@@ -224,39 +240,80 @@ function transformConfigPlaceholder() {
 }
 
 async function handleTransformSubmit() {
-  if (transformSubmitting.value) return
-  transformSubmitting.value = true
-  try {
+  const parentId = transformsDefineId.value
+  const editingId = editingTransformId.value
+  const generation = transformFormGeneration.value
+  if (parentId == null || transformsLoading.value || transformsError.value) return
+  const payload = { ...transformForm }
+  const isCurrentForm = () => transformsDialogVisible.value && transformFormVisible.value
+    && transformsDefineId.value === parentId && transformFormGeneration.value === generation
+  let completed = false
+  await children.run(`transform-form:${generation}`, async isCurrent => {
     const valid = await transformFormRef.value?.validate().catch(() => false)
-    if (!valid || !transformsDefineId.value) {
-      return
-    }
-    if (editingTransformId.value) {
-      await updateSqlFieldTransform(transformsDefineId.value, editingTransformId.value, transformForm)
-      ElMessage.success('保存成功')
+    if (!valid || !isCurrent() || !isCurrentForm()) return
+    if (editingId != null) {
+      await updateSqlFieldTransform(parentId, editingId, payload)
     } else {
-      await createSqlFieldTransform(transformsDefineId.value, transformForm)
-      ElMessage.success('新增成功')
+      await createSqlFieldTransform(parentId, payload)
     }
+    completed = true
+  }, async () => {
+    if (!completed || !isCurrentForm()) return
+    ElMessage.success(editingId == null ? '新增成功' : '保存成功')
     transformFormVisible.value = false
     await loadTransforms()
-  } finally {
-    transformSubmitting.value = false
-  }
+  })
 }
 
 async function handleTransformDelete(row: SqlFieldTransformVO) {
-  if (!transformsDefineId.value) return
-  await ElMessageBox.confirm(`确认删除列转换器「${row.fieldName}」？`, '提示', { type: 'warning' })
-  await deleteSqlFieldTransform(transformsDefineId.value, row.id)
-  ElMessage.success('删除成功')
-  await loadTransforms()
+  const parentId = transformsDefineId.value
+  const generation = transformsGeneration
+  if (parentId == null) return
+  const isCurrentParent = () => transformsDialogVisible.value && parentId === transformsDefineId.value && generation === transformsGeneration
+  let completed = false
+  await children.run(`transform-delete:${parentId}:${row.id}`, async isCurrent => {
+    await ElMessageBox.confirm(`确认删除列转换器「${row.fieldName}」？`, '提示', { type: 'warning' })
+    if (!isCurrent() || !isCurrentParent()) return
+    await deleteSqlFieldTransform(parentId, row.id)
+    completed = true
+  }, async () => {
+    if (!completed || !isCurrentParent()) return
+    ElMessage.success('删除成功')
+    await loadTransforms()
+  })
 }
 
-onMounted(() => {
-  loadList()
-  loadDatasourceOptions()
-})
+watch(paramFormVisible, visible => { if (!visible) paramFormGeneration.value += 1 }, { flush: 'sync' })
+watch(transformFormVisible, visible => { if (!visible) transformFormGeneration.value += 1 }, { flush: 'sync' })
+watch(paramsDialogVisible, visible => {
+  if (!visible) {
+    paramsGeneration += 1
+    resetParams()
+    paramFormVisible.value = false
+  }
+}, { flush: 'sync' })
+watch(transformsDialogVisible, visible => {
+  if (!visible) {
+    transformsGeneration += 1
+    resetTransforms()
+    transformFormVisible.value = false
+  }
+}, { flush: 'sync' })
+function resetChildren() {
+  paramsGeneration += 1
+  transformsGeneration += 1
+  paramsDialogVisible.value = transformsDialogVisible.value = false
+  paramFormVisible.value = transformFormVisible.value = false
+  paramsDefineId.value = transformsDefineId.value = null
+  resetParams()
+  resetTransforms()
+}
+watch([() => auth.token, () => auth.loginGeneration, () => auth.permissions.join('\0')], () => {
+  resetChildren()
+  if (auth.isLoggedIn && auth.isApproved && auth.hasPermission('sql-define:view')) void loadDatasourceOptions()
+}, { immediate: true })
+onScopeDispose(resetChildren)
+onMounted(loadList)
 </script>
 
 <template>
@@ -290,7 +347,7 @@ onMounted(() => {
             <el-button link type="primary" @click="openParams(row)">参数配置</el-button>
             <el-button link type="primary" @click="openTransforms(row)">列转换器</el-button>
             <el-button v-permission="'sql-define:edit'" link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button v-permission="'sql-define:add'" link type="primary" @click="handleCopy(row)">复制</el-button>
+            <el-button v-permission="'sql-define:add'" link type="primary" :loading="copies.isPending(row.id)" :disabled="copies.isPending(row.id)" @click="handleCopy(row)">复制</el-button>
             <el-button v-permission="'sql-define:delete'" link type="danger" :loading="deletingId === row.id" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -309,7 +366,8 @@ onMounted(() => {
 
     <!-- 新建/编辑 SQL 定义 -->
     <el-drawer v-model="drawerVisible" :title="drawerMode === 'create' ? '新建 SQL 定义' : '编辑 SQL 定义'" size="640px">
-      <el-form ref="formRef" :model="form" label-width="100px">
+      <CrudLoadState :error="datasourceError" :has-stale-data="datasourcesLoaded" :loading="datasourceLoading" @retry="loadDatasourceOptions" />
+      <el-form ref="formRef" :model="form" :disabled="submitting" label-width="100px">
         <el-form-item label="defineKey" prop="defineKey" :rules="[{ required: true, message: '请输入 defineKey' }]">
           <el-input v-model="form.defineKey" :disabled="drawerMode === 'edit'" placeholder="唯一标识，报表菜单靠它关联，如 order_daily_stat" />
         </el-form-item>
@@ -352,16 +410,17 @@ onMounted(() => {
       </el-form>
       <template #footer>
         <el-button @click="drawerVisible = false">取消</el-button>
-        <el-button class="cw-final-action" type="primary" :loading="submitting" @click="handleSubmit">保存定义</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="submitting" :disabled="datasourceBlocked || submitting" @click="handleSubmit">保存定义</el-button>
       </template>
     </el-drawer>
 
     <!-- 参数配置 -->
     <el-dialog v-model="paramsDialogVisible" :title="`参数配置 · ${paramsDefineKey}`" width="900px">
+      <CrudLoadState :error="paramsError" :has-stale-data="paramsList.length > 0" :loading="paramsLoading" @retry="loadParams" />
       <div class="toolbar">
-        <el-button class="cw-final-action" type="primary" v-permission="'sql-define:edit'" @click="openParamCreate">新增参数</el-button>
+        <el-button class="cw-final-action" type="primary" v-permission="'sql-define:edit'" :disabled="paramsLoading || !!paramsError" @click="openParamCreate">新增参数</el-button>
       </div>
-      <el-table v-loading="paramsLoading" :data="paramsList" style="width: 100%" size="small">
+      <el-table v-if="!paramsError || paramsList.length > 0" v-loading="paramsLoading" :data="paramsList" style="width: 100%" size="small">
         <el-table-column prop="paramName" label="参数名" width="130" />
         <el-table-column prop="paramDesc" label="描述" show-overflow-tooltip />
         <el-table-column label="类型" width="150">
@@ -385,7 +444,7 @@ onMounted(() => {
         <el-table-column label="操作" width="130" fixed="right">
           <template #default="{ row }: { row: SqlDefineParamVO }">
             <el-button link type="primary" v-permission="'sql-define:edit'" @click="openParamEdit(row)">编辑</el-button>
-            <el-button link type="danger" v-permission="'sql-define:edit'" @click="handleParamDelete(row)">删除</el-button>
+            <el-button link type="danger" v-permission="'sql-define:edit'" :loading="children.isPending(`param-delete:${paramsDefineId}:${row.id}`)" :disabled="children.isPending(`param-delete:${paramsDefineId}:${row.id}`)" @click="handleParamDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -395,7 +454,7 @@ onMounted(() => {
     </el-dialog>
 
     <el-dialog v-model="paramFormVisible" :title="editingParamId ? '编辑参数' : '新增参数'" width="520px" append-to-body>
-      <el-form ref="paramFormRef" :model="paramForm" label-width="90px">
+      <el-form ref="paramFormRef" :model="paramForm" :disabled="paramSubmitting" label-width="90px">
         <el-form-item label="参数名" prop="paramName" :rules="[{ required: true, message: '请输入参数名' }]">
           <el-input v-model="paramForm.paramName" :disabled="!!editingParamId" placeholder="对应 SQL 里的 :paramName" />
         </el-form-item>
@@ -441,16 +500,17 @@ onMounted(() => {
       </el-form>
       <template #footer>
         <el-button @click="paramFormVisible = false">取消</el-button>
-        <el-button class="cw-final-action" type="primary" :loading="paramSubmitting" @click="handleParamSubmit">保存参数</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="paramSubmitting" :disabled="paramSubmitting || paramsLoading || !!paramsError" @click="handleParamSubmit">保存参数</el-button>
       </template>
     </el-dialog>
 
     <!-- 列转换器 -->
     <el-dialog v-model="transformsDialogVisible" :title="`列转换器 · ${transformsDefineKey}`" width="700px">
+      <CrudLoadState :error="transformsError" :has-stale-data="transformsList.length > 0" :loading="transformsLoading" @retry="loadTransforms" />
       <div class="toolbar">
-        <el-button class="cw-final-action" type="primary" v-permission="'sql-define:edit'" @click="openTransformCreate">新增转换器</el-button>
+        <el-button class="cw-final-action" type="primary" v-permission="'sql-define:edit'" :disabled="transformsLoading || !!transformsError" @click="openTransformCreate">新增转换器</el-button>
       </div>
-      <el-table v-loading="transformsLoading" :data="transformsList" style="width: 100%" size="small">
+      <el-table v-if="!transformsError || transformsList.length > 0" v-loading="transformsLoading" :data="transformsList" style="width: 100%" size="small">
         <el-table-column prop="fieldName" label="列名" width="140" />
         <el-table-column label="类型" width="110">
           <template #default="{ row }: { row: SqlFieldTransformVO }">
@@ -461,7 +521,7 @@ onMounted(() => {
         <el-table-column label="操作" width="130" fixed="right">
           <template #default="{ row }: { row: SqlFieldTransformVO }">
             <el-button link type="primary" v-permission="'sql-define:edit'" @click="openTransformEdit(row)">编辑</el-button>
-            <el-button link type="danger" v-permission="'sql-define:edit'" @click="handleTransformDelete(row)">删除</el-button>
+            <el-button link type="danger" v-permission="'sql-define:edit'" :loading="children.isPending(`transform-delete:${transformsDefineId}:${row.id}`)" :disabled="children.isPending(`transform-delete:${transformsDefineId}:${row.id}`)" @click="handleTransformDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -471,7 +531,7 @@ onMounted(() => {
     </el-dialog>
 
     <el-dialog v-model="transformFormVisible" :title="editingTransformId ? '编辑转换器' : '新增转换器'" width="480px" append-to-body>
-      <el-form ref="transformFormRef" :model="transformForm" label-width="90px">
+      <el-form ref="transformFormRef" :model="transformForm" :disabled="transformSubmitting" label-width="90px">
         <el-form-item label="列名" prop="fieldName" :rules="[{ required: true, message: '请输入列名' }]">
           <el-input v-model="transformForm.fieldName" :disabled="!!editingTransformId" placeholder="匹配查询结果集里的列名" />
         </el-form-item>
@@ -486,7 +546,7 @@ onMounted(() => {
       </el-form>
       <template #footer>
         <el-button @click="transformFormVisible = false">取消</el-button>
-        <el-button class="cw-final-action" type="primary" :loading="transformSubmitting" @click="handleTransformSubmit">保存转换器</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="transformSubmitting" :disabled="transformSubmitting || transformsLoading || !!transformsError" @click="handleTransformSubmit">保存转换器</el-button>
       </template>
     </el-dialog>
   </div>

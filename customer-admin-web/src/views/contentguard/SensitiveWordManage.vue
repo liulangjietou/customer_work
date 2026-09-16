@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
 import type { FormInstance } from 'element-plus'
 import {
   createSensitiveWord,
@@ -14,16 +14,38 @@ import {
 } from '@/api/contentGuard'
 import { useCrudPage } from '@/composables/useCrudPage'
 import { useRowMutation } from '@/composables/useRowMutation'
+import { useQueryState } from '@/composables/useQueryState'
+import { useAuthStore } from '@/store/auth'
 import CrudLoadState from '@/components/CrudLoadState.vue'
 import type { SensitiveWordPageQuery, SensitiveWordSaveRequest, SensitiveWordVO } from '@/types/api'
 
 const formRef = ref<FormInstance>()
-const categories = ref<string[]>([])
-const actions = ref<string[]>([])
+const auth = useAuthStore()
+const { data: options, loading: optionsLoading, error: optionsError, loaded: optionsLoaded, load: loadOptions } =
+  useQueryState(async () => {
+    const [categories, actions] = await Promise.all([fetchSensitiveWordCategories(), fetchSensitiveWordActions()])
+    return { categories, actions }
+  }, () => ({ categories: [] as string[], actions: [] as string[] }))
+const categories = computed(() => options.value.categories)
+const actions = computed(() => options.value.actions)
+const optionsBlocked = computed(() => optionsLoading.value || !!optionsError.value || !optionsLoaded.value)
 const importVisible = ref(false)
 const importText = ref('')
-const importing = ref(false)
+const importGeneration = ref(0)
+const imports = useRowMutation<number>('sensitive-word:add')
+const exports = useRowMutation<number>('sensitive-word:view')
+const importing = computed(() => imports.isPending(importGeneration.value))
+const exporting = computed(() => exports.isPending(0))
 const rowMutation = useRowMutation('sensitive-word:edit')
+
+watch(importVisible, () => { importGeneration.value += 1 }, { flush: 'sync' })
+watch([() => auth.token, () => auth.loginGeneration, () => auth.permissions.join('\0')], () => {
+  importGeneration.value += 1
+  importVisible.value = false
+  importText.value = ''
+  if (auth.isLoggedIn && auth.isApproved && auth.hasPermission('sensitive-word:view')) void loadOptions()
+}, { immediate: true })
+onScopeDispose(() => { importGeneration.value += 1 })
 
 const {
   loading, loadError, submitting, deletingId, list, total, query,
@@ -39,6 +61,7 @@ const {
   initForm: () => ({ word: '', category: 'CUSTOM', action: 'BLOCK', enabled: true }),
   toForm: (row) => ({ word: row.word, category: row.category, action: row.action, enabled: row.enabled }),
   deleteConfirm: (row) => `确认删除敏感词「${row.word}」？删除后客服端在下一次词表刷新时生效。`,
+  beforeSubmit: () => !optionsBlocked.value,
 })
 
 const categoryLabels: Record<string, string> = {
@@ -69,46 +92,48 @@ async function handleToggle(row: SensitiveWordVO) {
 }
 
 async function handleImport() {
+  if (importing.value || !importVisible.value) return
+  const generation = importGeneration.value
   const lines = importText.value.split('\n').map((line) => line.trim()).filter((line) => line.length > 0)
   if (lines.length === 0) {
     ElMessage.warning('请先粘贴要导入的词条')
     return
   }
-  importing.value = true
-  try {
-    const count = await importSensitiveWords(lines)
+  let count = 0
+  await imports.run(generation, async () => { count = await importSensitiveWords(lines) }, async () => {
+    if (!importVisible.value || generation !== importGeneration.value) return
     ElMessage.success(`导入完成，共处理 ${count} 条`)
     importVisible.value = false
     importText.value = ''
     await loadList()
-  } finally {
-    importing.value = false
-  }
+  })
 }
 
 /** 导出走浏览器下载：词库动辄上千条，塞进弹窗让用户手动复制不现实。 */
 async function handleExport() {
-  const lines = await exportSensitiveWords()
-  const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = `sensitive-words-${Date.now()}.csv`
-  link.click()
-  URL.revokeObjectURL(url)
-  ElMessage.success(`已导出 ${lines.length} 条`)
+  let lines: string[] = []
+  await exports.run(0, async () => { lines = await exportSensitiveWords() }, () => {
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    try {
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `sensitive-words-${Date.now()}.csv`
+      link.click()
+      ElMessage.success(`已导出 ${lines.length} 条`)
+    } finally {
+      URL.revokeObjectURL(url)
+    }
+  })
 }
 
-onMounted(async () => {
-  await loadList()
-  categories.value = await fetchSensitiveWordCategories()
-  actions.value = await fetchSensitiveWordActions()
-})
+onMounted(loadList)
 </script>
 
 <template>
   <div class="page">
     <CrudLoadState :error="loadError" :has-stale-data="list.length > 0" :loading="loading" @retry="loadList" />
+    <CrudLoadState :error="optionsError" :has-stale-data="optionsLoaded" :loading="optionsLoading" @retry="loadOptions" />
     <el-alert type="info" :closable="false" show-icon class="notice">
       词库存放于客服端库，是客服链路与后台工作区共用的唯一真源。改动后由客服端轮询版本指纹自动生效
       （默认 60 秒内），无需重启任何服务。
@@ -136,7 +161,7 @@ onMounted(async () => {
         <el-button type="primary" @click="handleSearch">搜索</el-button>
         <div class="toolbar-actions">
           <el-button v-permission="'sensitive-word:add'" @click="importVisible = true">批量导入</el-button>
-          <el-button @click="handleExport">导出</el-button>
+          <el-button :loading="exporting" :disabled="exporting" @click="handleExport">导出</el-button>
           <el-button v-permission="'sensitive-word:add'" class="cw-final-action" type="primary" @click="openCreate">新增敏感词</el-button>
         </div>
       </div>
@@ -184,7 +209,8 @@ onMounted(async () => {
     </el-card>
 
     <el-dialog v-model="dialogVisible" :title="dialogMode === 'create' ? '新增敏感词' : '编辑敏感词'" width="480px">
-      <el-form ref="formRef" :model="form" label-width="100px">
+      <CrudLoadState :error="optionsError" :has-stale-data="optionsLoaded" :loading="optionsLoading" @retry="loadOptions" />
+      <el-form ref="formRef" :model="form" :disabled="submitting" label-width="100px">
         <el-form-item label="敏感词" prop="word" :rules="[{ required: true, message: '请输入敏感词' }]">
           <el-input v-model="form.word" placeholder="维护原词即可，匹配时自动兼容全角/大小写/插入符变体" />
         </el-form-item>
@@ -205,7 +231,7 @@ onMounted(async () => {
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button class="cw-final-action" type="primary" :loading="submitting" @click="handleSubmit">保存敏感词</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="submitting" :disabled="optionsBlocked || submitting" @click="handleSubmit">保存敏感词</el-button>
       </template>
     </el-dialog>
 
@@ -216,6 +242,7 @@ onMounted(async () => {
       </div>
       <el-input
         v-model="importText"
+        :disabled="importing"
         type="textarea"
         :rows="12"
         placeholder="示例：&#10;测试词A,CUSTOM,BLOCK&#10;竞品词B,COMPETITOR,MASK&#10;只有词面的一行"
@@ -223,7 +250,7 @@ onMounted(async () => {
       <div class="form-hint import-count">待导入 {{ importLineCount }} 条</div>
       <template #footer>
         <el-button @click="importVisible = false">取消</el-button>
-        <el-button class="cw-final-action" type="primary" :loading="importing" @click="handleImport">确认导入</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="importing" :disabled="importing" @click="handleImport">确认导入</el-button>
       </template>
     </el-dialog>
   </div>

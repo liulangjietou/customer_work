@@ -19,6 +19,13 @@ public class InMemoryEvalCaseStore implements EvalCaseStore {
     private final Map<String, PersistedEvalCase> cases = new ConcurrentHashMap<>();
 
     @Override
+    public void create(PersistedEvalCase evalCase) {
+        if (cases.putIfAbsent(key(evalCase.evalType(), evalCase.caseId()), evalCase) != null) {
+            throw new IllegalStateException("eval case id already exists: " + evalCase.caseId());
+        }
+    }
+
+    @Override
     public void save(PersistedEvalCase evalCase) {
         if (evalCase == null || evalCase.caseId() == null) {
             return;

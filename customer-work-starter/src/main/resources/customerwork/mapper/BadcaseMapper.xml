@@ -39,6 +39,10 @@
             ignore_reason = VALUES(ignore_reason)
     </insert>
 
+    <select id="selectByIdForUpdate" resultType="com.richard.fyoung.customerwork.capability.badcase.entity.BadcaseDO">
+        SELECT <include refid="columns"/> FROM cw_badcase WHERE id = #{id} FOR UPDATE
+    </select>
+
     <select id="selectByCondition" resultType="com.richard.fyoung.customerwork.capability.badcase.entity.BadcaseDO">
         SELECT <include refid="columns"/> FROM cw_badcase
         <include refid="conditions"/>

@@ -4,7 +4,7 @@
 -- 生成方式：scripts/export-schema-snapshot.sh
 --           新建临时空库执行 classpath:db/customerwork/migration 的全部迁移
 --           （含 V2/V9 两个 Java 迁移）后逐表导出，自增当前值已抹除。
--- 对应版本：Flyway V29
+-- 对应版本：Flyway V30
 -- 真源：customer-work-starter/src/main/resources/db/customerwork/migration/
 --       + com.richard.fyoung.customerwork.infra.migration 下的 Java 迁移。
 --       改结构一律新增迁移，改本文件不会生效。
@@ -898,7 +898,7 @@ CREATE TABLE `cw_semantic_cache` (
 -- cw_sensitive_word
 -- ----------------------------------------------------------------------------
 CREATE TABLE `cw_sensitive_word` (
-  `tenant_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
+  `tenant_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT 'default' COMMENT '租户ID（多租户行级隔离）',
   `id` bigint NOT NULL AUTO_INCREMENT COMMENT '自增主键',
   `word` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '敏感词原词面',
   `category` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '类目: POLITICS/PORN/ABUSE/COMPETITOR/CUSTOM',

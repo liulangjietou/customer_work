@@ -113,12 +113,17 @@ public class Badcase {
      * 而检索时重复内容会挤占本就有限的召回位。</p>
      */
     public void adoptAsKnowledge(Long knowledgeId, String operator, long whenMs) {
+        requireKnowledgeAdoptionAvailable();
+        this.adoptedKnowledgeId = knowledgeId;
+        markHandled(operator, whenMs);
+    }
+
+    /** 在创建知识条目前检查状态，避免已处理记录产生无引用的知识条目。 */
+    public void requireKnowledgeAdoptionAvailable() {
         if (adoptedKnowledgeId != null) {
             throw new IllegalStateException(
                 "badcase already adopted as knowledge: id=" + id + ", knowledgeId=" + adoptedKnowledgeId);
         }
-        this.adoptedKnowledgeId = knowledgeId;
-        markHandled(operator, whenMs);
     }
 
     /**
@@ -127,12 +132,17 @@ public class Badcase {
      * <p>与 {@link #adoptAsKnowledge} 互不排斥，一条 badcase 值得两件事都做。</p>
      */
     public void adoptAsEvalCase(String evalCaseId, String operator, long whenMs) {
+        requireEvaluationAdoptionAvailable();
+        this.adoptedEvalCaseId = evalCaseId;
+        markHandled(operator, whenMs);
+    }
+
+    /** 在创建评测用例前检查状态，重复采纳不能先写入另一条用例再报错。 */
+    public void requireEvaluationAdoptionAvailable() {
         if (adoptedEvalCaseId != null) {
             throw new IllegalStateException(
                 "badcase already adopted as eval case: id=" + id + ", caseId=" + adoptedEvalCaseId);
         }
-        this.adoptedEvalCaseId = evalCaseId;
-        markHandled(operator, whenMs);
     }
 
     /**
