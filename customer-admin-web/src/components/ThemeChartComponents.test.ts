@@ -186,6 +186,13 @@ interface SeriesOption {
 }
 
 interface CapturedOption {
+  grid: { top: number }
+  legend?: {
+    type?: string
+    pageIconColor?: string
+    pageIconInactiveColor?: string
+    pageTextStyle?: { color: string }
+  }
   color: string[]
   textStyle: { color: string }
   tooltip: {
@@ -284,6 +291,14 @@ type ChartKind = 'agent' | 'contentGuard' | 'eval'
 
 function expectSeriesEncoding(option: CapturedOption, kind: ChartKind, palette: ThemeChartPalette) {
   if (kind === 'agent') {
+    // 七个指标在窄屏不能换行压住坐标说明；分页按钮也必须沿用当前主题。
+    expect(option.legend).toMatchObject({
+      type: 'scroll',
+      pageIconColor: palette.text,
+      pageIconInactiveColor: palette.axis,
+      pageTextStyle: { color: palette.text },
+    })
+    expect(option.grid.top).toBeGreaterThanOrEqual(56)
     expect(option.series.map((series) => series.symbol)).toEqual([
       'circle',
       'rect',
