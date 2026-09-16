@@ -31,4 +31,16 @@ public class KnowledgeGapDO {
 
     private Long firstSeenAtMs;
     private Long lastSeenAtMs;
+    private String retrievalPath;
+    private String sourceAgentCode;
+    private String sourceChannelCode;
+    private String sourceSessionType;
+    private String retrievalResult;
+    private String category;
+    private String priority;
+    private String classificationOrigin;
+    private String classificationReason;
+    private Long reviewRevision;
+    private String reviewedBy;
+    private Long reviewedAtMs;
 }

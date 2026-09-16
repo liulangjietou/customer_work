@@ -6,15 +6,18 @@ import com.richard.fyoung.customeradmin.common.result.Result;
 import com.richard.fyoung.customeradmin.ops.dto.FillKnowledgeGapRequest;
 import com.richard.fyoung.customeradmin.ops.service.OpsAdminService;
 import com.richard.fyoung.customerwork.capability.knowledgegap.KnowledgeGap;
+import com.richard.fyoung.customerwork.capability.knowledgegap.KnowledgeGapView;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import java.util.List;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.List;
 
 /**
  * 知识盲区运营入口：反复查不到的问题排行 + 一键补知识。
@@ -24,6 +27,7 @@ import java.util.List;
  * @author owlzhangfq@gmail.com
  */
 @RestController
+@Validated
 @RequestMapping("/api/ops/knowledge-gap")
 public class KnowledgeGapController {
 
@@ -39,8 +43,10 @@ public class KnowledgeGapController {
     @SaCheckPermission("knowledge-gap:view")
     @GetMapping("/top")
     public Result<List<KnowledgeGap>> top(@RequestParam(required = false) String scopeId,
-                                          @RequestParam(defaultValue = "" + DEFAULT_LIMIT) int limit) {
-        return Result.success(opsAdminService.topKnowledgeGaps(scopeId, limit));
+                                          @RequestParam(defaultValue = "" + DEFAULT_LIMIT) @Min(1) @Max(200) int limit,
+                                          @RequestParam(required = false) KnowledgeGapView view) {
+        return Result.success(view == null ? opsAdminService.topKnowledgeGaps(scopeId, limit)
+            : opsAdminService.topKnowledgeGaps(scopeId, limit, view));
     }
 
     /**

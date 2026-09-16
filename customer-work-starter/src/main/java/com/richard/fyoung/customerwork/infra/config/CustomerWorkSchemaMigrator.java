@@ -46,6 +46,8 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
     private static final String COLLATION_ALIGNMENT_MIRROR_VERSION = "22";
     private static final String PUBLIC_TRIAL_QUOTA_MIRROR_VERSION = "23";
     private static final String KNOWLEDGE_CHUNK_MIRROR_VERSION = "24";
+    private static final String KNOWLEDGE_GAP_REVIEW_MIRROR_VERSION = "25";
+    private static final String KNOWLEDGE_GAP_REVIEW_AUDIT_MIRROR_VERSION = "26";
 
     /** 两库 CREATE DATABASE 声明的排序规则，V22 起全部 cw_* 表对齐于此。 */
     private static final String TARGET_COLLATION = "utf8mb4_unicode_ci";
@@ -235,9 +237,24 @@ public class CustomerWorkSchemaMigrator implements InitializingBean {
                 return COLLATION_ALIGNMENT_MIRROR_VERSION;
             }
             // V24 是建表迁移，有结构痕迹，按表在不在判定即可。
-            return tableExists(connection, "cw_knowledge_chunk")
-                && tableExists(connection, "cw_knowledge_version")
-                ? KNOWLEDGE_CHUNK_MIRROR_VERSION : PUBLIC_TRIAL_QUOTA_MIRROR_VERSION;
+            if (!tableExists(connection, "cw_knowledge_chunk")
+                    || !tableExists(connection, "cw_knowledge_version")) {
+                return PUBLIC_TRIAL_QUOTA_MIRROR_VERSION;
+            }
+            // V25 的分类字段和复核表须同时完整；仅有其中一部分不能跳过迁移。
+            boolean knowledgeGapReviewMirror = tableExists(connection, "cw_knowledge_gap_review")
+                && indexExists(connection, "cw_knowledge_gap_review", "uk_gap_review");
+            for (String column : new String[]{"retrieval_path", "source_agent_code", "source_channel_code",
+                    "source_session_type", "retrieval_result", "category", "priority", "classification_origin",
+                    "classification_reason", "review_revision", "reviewed_by", "reviewed_at_ms"}) {
+                knowledgeGapReviewMirror &= columnExists(connection, "cw_knowledge_gap", column);
+            }
+            if (!knowledgeGapReviewMirror) {
+                return KNOWLEDGE_CHUNK_MIRROR_VERSION;
+            }
+            return columnExists(connection, "cw_knowledge_gap_review", "created_at")
+                    && columnExists(connection, "cw_knowledge_gap_review", "updated_at")
+                ? KNOWLEDGE_GAP_REVIEW_AUDIT_MIRROR_VERSION : KNOWLEDGE_GAP_REVIEW_MIRROR_VERSION;
         }
     }
 

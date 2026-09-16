@@ -980,6 +980,18 @@ CREATE TABLE IF NOT EXISTS `cw_knowledge_gap` (
     `last_seen_at_ms`   BIGINT NOT NULL COMMENT '最近出现时间戳（毫秒）',
     `created_at`        DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '记录创建时间',
     `updated_at`        DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '记录最后修改时间',
+    retrieval_path VARCHAR(16) NULL COMMENT '最近样本的检索路径',
+    source_agent_code VARCHAR(128) NULL COMMENT '最近样本的实际智能体',
+    source_channel_code VARCHAR(64) NULL COMMENT '最近样本的可信入口',
+    source_session_type VARCHAR(32) NULL COMMENT '最近样本的会话类型',
+    retrieval_result VARCHAR(16) NULL COMMENT '最近样本的检索结果',
+    category VARCHAR(32) NOT NULL DEFAULT 'PENDING' COMMENT '运营分类',
+    priority VARCHAR(16) NOT NULL DEFAULT 'NORMAL' COMMENT '人工优先级',
+    classification_origin VARCHAR(16) NOT NULL DEFAULT 'UNKNOWN' COMMENT '规则建议或人工结论',
+    classification_reason VARCHAR(1000) NOT NULL DEFAULT '只有检索未命中证据，尚不足以判断原因' COMMENT '当前分类理由',
+    review_revision BIGINT NOT NULL DEFAULT 0 COMMENT '人工复核修订',
+    reviewed_by VARCHAR(64) NULL COMMENT '复核后台用户ID',
+    reviewed_at_ms BIGINT NULL COMMENT '最近复核时间',
     UNIQUE KEY `uk_knowledge_gap` (`tenant_id`, `scope_id`, `question_hash`),
     -- 排行查询是 (scope_id, miss_count DESC) 的限额扫描
     INDEX `idx_knowledge_gap_rank` (`tenant_id`, `scope_id`, `miss_count`)
@@ -1148,3 +1160,23 @@ CREATE TABLE IF NOT EXISTS `cw_knowledge_version` (
     UNIQUE KEY `uk_cw_kb_version` (`kb_version_id`),
     KEY `idx_cw_kb_version_code` (`tenant_id`, `kb_code`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='受管知识库版本在客服端的检索投影';
+
+-- ===== 未命中分类与人工复核（V25 / V26）=====
+CREATE TABLE IF NOT EXISTS cw_knowledge_gap_review (
+    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '租户ID',
+    scope_id VARCHAR(128) NOT NULL COMMENT '原始信号分区',
+    question_hash VARCHAR(64) NOT NULL COMMENT '原始问题哈希',
+    revision BIGINT NOT NULL COMMENT '复核修订',
+    previous_category VARCHAR(32) NOT NULL COMMENT '修改前类别',
+    previous_priority VARCHAR(16) NOT NULL COMMENT '修改前优先级',
+    category VARCHAR(32) NOT NULL COMMENT '修改后类别',
+    priority VARCHAR(16) NOT NULL COMMENT '修改后优先级',
+    reason VARCHAR(1000) NOT NULL COMMENT '人工判断理由',
+    reviewed_by VARCHAR(64) NOT NULL COMMENT '复核后台用户ID',
+    reviewed_at_ms BIGINT NOT NULL COMMENT '复核时间',
+    signal_count BIGINT NOT NULL COMMENT '复核保存时的计数快照',
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '记录创建时间',
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '记录最后修改时间',
+    UNIQUE KEY uk_gap_review (tenant_id, scope_id, question_hash, revision)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识缺口人工复核流水';

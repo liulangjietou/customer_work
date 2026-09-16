@@ -4,6 +4,7 @@ import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkDbProperties;
 import com.richard.fyoung.customeradmin.common.gateway.CustomerWorkFacade;
 import com.richard.fyoung.customeradmin.tenant.AdminCrossDbTenantPlugins;
 import com.richard.fyoung.customerwork.capability.knowledgegap.KnowledgeGapService;
+import com.richard.fyoung.customerwork.data.rag.search.KnowledgeGapEvidence;
 import com.richard.fyoung.customerwork.data.rag.search.KnowledgeGapRecorder;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
@@ -51,8 +52,13 @@ public class AdminKnowledgeGapRecorder implements KnowledgeGapRecorder {
 
     @Override
     public void recordMiss(String sessionId, String question) {
+        recordMiss(sessionId, question, null);
+    }
+
+    @Override
+    public void recordMiss(String sessionId, String question, KnowledgeGapEvidence evidence) {
         try {
-            facade.get().recordMiss(sessionId, question);
+            facade.get().recordMiss(sessionId, question, evidence);
         } catch (Exception e) {
             // 旁路埋点：库不可达 / 建连失败都只记日志，绝不冒泡打断这一轮对话
             log.error("knowledge gap record failed, code={}, url={}", CODE_RECORD_FAIL, properties.jdbcUrl(), e);

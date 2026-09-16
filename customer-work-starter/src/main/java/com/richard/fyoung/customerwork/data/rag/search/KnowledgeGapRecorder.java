@@ -1,5 +1,9 @@
 package com.richard.fyoung.customerwork.data.rag.search;
 
+import com.richard.fyoung.customerwork.safety.security.AgentInvocationIdentity;
+import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
+import io.agentscope.core.agent.RuntimeContext;
+
 /**
  * 知识盲区埋点接口（检索侧 SPI）。
  *
@@ -29,4 +33,19 @@ public interface KnowledgeGapRecorder {
      * @param question  用户问题原文
      */
     void recordMiss(String sessionId, String question);
+
+    /** 兼容已有实现；支持来源的记录器覆盖此方法。 */
+    default void recordMiss(String sessionId, String question, KnowledgeGapEvidence evidence) {
+        recordMiss(sessionId, question);
+    }
+
+    /** 在调度前冻结租户和来源；返回的旁路动作可在异步检索完成后执行。 */
+    default Runnable captureMiss(String question, RuntimeContext context,
+                                  KnowledgeGapEvidence.Path path, String executingAgent) {
+        AgentInvocationIdentity identity = context == null ? null : context.get(AgentInvocationIdentity.class);
+        String tenant = identity == null ? TenantContext.get() : identity.tenantId();
+        String session = context == null ? null : context.getSessionId();
+        KnowledgeGapEvidence evidence = KnowledgeGapEvidence.capture(context, path, executingAgent);
+        return () -> TenantContext.runWith(tenant, () -> recordMiss(session, question, evidence));
+    }
 }

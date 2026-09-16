@@ -70,7 +70,11 @@ export interface PromptVersion {
 }
 
 export function listPromptVersions(limit = 30) {
-  return request<PromptVersion[]>({ url: '/ops/prompt-version/list', method: 'get', params: { limit } })
+  return request<PromptVersion[]>({
+    url: '/ops/prompt-version/list',
+    method: 'get',
+    params: { limit },
+  })
 }
 
 export function getPromptVersion(fingerprint: string) {
@@ -119,6 +123,46 @@ export function listCsatSurveys(params: CsatWindowQuery) {
 
 // ---------- 知识盲区 ----------
 
+export type KnowledgeGapCategory =
+  | 'PENDING'
+  | 'KNOWLEDGE'
+  | 'DEPENDENCY'
+  | 'PROCESS'
+  | 'REALTIME'
+  | 'NON_BUSINESS'
+export type KnowledgeGapPriority = 'NORMAL' | 'HIGH'
+export type KnowledgeGapView = 'WORK' | 'ALL' | KnowledgeGapCategory
+export interface KnowledgeGapClassification {
+  category: KnowledgeGapCategory
+  priority: KnowledgeGapPriority
+  origin: 'UNKNOWN' | 'RULE' | 'MANUAL'
+  reason: string
+  revision: number
+  reviewedBy: string | null
+  reviewedAtMs: number | null
+}
+export interface KnowledgeGapReview {
+  revision: number
+  previousCategory: KnowledgeGapCategory
+  previousPriority: KnowledgeGapPriority
+  category: KnowledgeGapCategory
+  priority: KnowledgeGapPriority
+  reason: string
+  reviewedBy: string
+  reviewedAtMs: number
+  signalCount: number
+}
+export interface KnowledgeGapReviewDetail {
+  gap: KnowledgeGap
+  history: KnowledgeGapReview[]
+}
+export interface KnowledgeGapReviewRequest {
+  expectedRevision: number
+  category: KnowledgeGapCategory
+  priority: KnowledgeGapPriority
+  reason: string
+}
+
 export interface KnowledgeGap {
   questionHash: string
   question: string
@@ -127,6 +171,14 @@ export interface KnowledgeGap {
   missCount: number
   firstSeenAtMs: number
   lastSeenAtMs: number
+  evidence?: {
+    path: 'TOOL' | 'INJECTION'
+    agentCode: string | null
+    channelCode: string | null
+    sessionType: string | null
+    retrievalResult: 'EMPTY'
+  } | null
+  classification?: KnowledgeGapClassification
 }
 
 export interface FillKnowledgeGapRequest {
@@ -136,18 +188,42 @@ export interface FillKnowledgeGapRequest {
   keyword: string
 }
 
-export function listKnowledgeGaps(scopeId?: string, limit = 50) {
+export function listKnowledgeGaps(scopeId?: string, limit = 50, view?: KnowledgeGapView) {
   return request<KnowledgeGap[]>({
     url: '/ops/knowledge-gap/top',
     method: 'get',
-    params: { scopeId, limit },
+    params: { scopeId, limit, view },
+    suppressErrorMessage: true,
+  })
+}
+
+/** 原始问题与复核记录共用当前已认证租户，不接受浏览器指定分区。 */
+export function getKnowledgeGapReview(questionHash: string, beforeRevision?: number) {
+  return request<KnowledgeGapReviewDetail>({
+    url: `/ops/knowledge-gap/reviews/${questionHash}`,
+    method: 'get',
+    params: { beforeRevision },
+    suppressErrorMessage: true,
+  })
+}
+
+export function saveKnowledgeGapReview(questionHash: string, data: KnowledgeGapReviewRequest) {
+  return request<KnowledgeGap>({
+    url: `/ops/knowledge-gap/reviews/${questionHash}`,
+    method: 'post',
+    data,
     suppressErrorMessage: true,
   })
 }
 
 /** 一键补知识，返回新建的知识条目 ID。 */
 export function fillKnowledgeGap(data: FillKnowledgeGapRequest) {
-  return request<number>({ url: '/ops/knowledge-gap/fill', method: 'post', data, suppressErrorMessage: true })
+  return request<number>({
+    url: '/ops/knowledge-gap/fill',
+    method: 'post',
+    data,
+    suppressErrorMessage: true,
+  })
 }
 
 // ---------- 死信队列 ----------
@@ -169,11 +245,18 @@ export interface DeadLetter {
 }
 
 export function listDeadLetters(status: DeadLetterStatusCode, limit = 50) {
-  return request<DeadLetter[]>({ url: '/ops/dead-letter/list', method: 'get', params: { status, limit } })
+  return request<DeadLetter[]>({
+    url: '/ops/dead-letter/list',
+    method: 'get',
+    params: { status, limit },
+  })
 }
 
 export function getDeadLetterStats() {
-  return request<Record<DeadLetterStatusCode, number>>({ url: '/ops/dead-letter/stats', method: 'get' })
+  return request<Record<DeadLetterStatusCode, number>>({
+    url: '/ops/dead-letter/stats',
+    method: 'get',
+  })
 }
 
 /** 人工重开：确认下游恢复后把已放弃的放回待重投队列（会清零重试次数）。 */
