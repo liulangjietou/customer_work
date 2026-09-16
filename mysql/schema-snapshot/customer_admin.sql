@@ -4,7 +4,7 @@
 -- 生成方式：scripts/export-schema-snapshot.sh
 --           新建临时空库执行 classpath:db/migration 的全部迁移后逐表导出，
 --           自增当前值已抹除。
--- 对应版本：Flyway V111
+-- 对应版本：Flyway V113
 -- 真源：customer-admin-server/src/main/resources/db/migration/
 --       改结构一律新增迁移，改本文件不会生效。
 -- 内容：全部表结构 + 迁移写入的系统种子数据（菜单权限树、角色、默认租户、admin 账号等）。
@@ -93,6 +93,29 @@ CREATE TABLE `ai_agent_draft` (
   PRIMARY KEY (`id`),
   KEY `idx_agent_draft_owner` (`tenant_id`,`owner_user_id`,`updated_at_ms`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='智能体个人配置草稿';
+
+-- ----------------------------------------------------------------------------
+-- ai_agent_draft_trial
+-- ----------------------------------------------------------------------------
+CREATE TABLE `ai_agent_draft_trial` (
+  `id` char(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `tenant_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  `owner_user_id` bigint NOT NULL,
+  `draft_id` char(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `draft_version` bigint NOT NULL,
+  `input` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `request_fingerprint` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `configuration_fingerprint` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `frozen_configuration` json NOT NULL COMMENT '不包含凭据的服务器冻结配置与资源版本',
+  `phase` varchar(24) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `result_json` json DEFAULT NULL,
+  `error_code` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `accepted_at_ms` bigint NOT NULL,
+  `deadline_at_ms` bigint NOT NULL,
+  `finished_at_ms` bigint DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_draft_trial_owner` (`tenant_id`,`owner_user_id`,`draft_id`,`accepted_at_ms`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='智能体个人草稿试用回执';
 
 -- ----------------------------------------------------------------------------
 -- ai_agent_improvement_case

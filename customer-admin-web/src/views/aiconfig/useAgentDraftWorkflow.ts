@@ -24,14 +24,14 @@ export function useAgentDraftWorkflow(
   const updatedAtMs = ref<number | null>(null)
   const baseline = ref('')
   const version = ref(0)
-  let id = ''
+  const id = ref('')
   let generation = 0
   const snapshot = () => JSON.stringify(form)
   const dirty = computed(() => visible.value && snapshot() !== baseline.value)
 
   function begin(draft?: AgentDraft, revision?: number) {
     generation += 1
-    id = draft?.id ?? crypto.randomUUID()
+    id.value = draft?.id ?? crypto.randomUUID()
     version.value = draft?.version ?? 0
     baseRevision.value = draft?.baseRevision ?? revision ?? null
     updatedAtMs.value = draft?.updatedAtMs ?? null
@@ -54,7 +54,7 @@ export function useAgentDraftWorkflow(
     saving.value = true
     error.value = ''
     try {
-      const result = await saveAgentDraft(id, requestData)
+      const result = await saveAgentDraft(id.value, requestData)
       if (request !== generation) return false
       version.value = result.version
       updatedAtMs.value = result.updatedAtMs
@@ -64,7 +64,7 @@ export function useAgentDraftWorkflow(
       if (request !== generation) return false
       // 写入响应可能丢失。只在服务端内容与这次请求完全一致时承认已保存，不覆盖别的标签页。
       try {
-        const found = await getAgentDraft(id)
+        const found = await getAgentDraft(id.value)
         const normalize = (value: AgentDraftConfiguration) =>
           JSON.stringify(
             Object.entries(value)
@@ -95,6 +95,7 @@ export function useAgentDraftWorkflow(
   }
 
   async function confirmLeave(): Promise<boolean> {
+    const request = generation
     if (!auth.token) return true
     if (saving.value || applying.value) return false
     if (!dirty.value) return true
@@ -108,14 +109,15 @@ export function useAgentDraftWorkflow(
           type: 'warning',
         },
       )
-      return true
+      return request === generation
     } catch {
       return false
     }
   }
 
   async function close() {
-    if (await confirmLeave()) {
+    const request = generation
+    if (await confirmLeave() && request === generation) {
       visible.value = false
       generation += 1
     }
@@ -123,12 +125,14 @@ export function useAgentDraftWorkflow(
 
   /** 正式保存成功后再清理对应草稿，清理失败不得把正式保存伪装成失败或重复执行。 */
   async function applied() {
+    const request = generation
     baseline.value = snapshot()
     if (!version.value) return
     try {
-      await deleteAgentDraft(id, version.value)
+      await deleteAgentDraft(id.value, version.value)
     } catch {
-      ElMessage.warning('智能体已保存，个人草稿暂未清理。可在“我的草稿”中核对后删除。')
+      if (request === generation)
+        ElMessage.warning('智能体已保存，个人草稿暂未清理。可在“我的草稿”中核对后删除。')
     }
   }
 
@@ -144,16 +148,21 @@ export function useAgentDraftWorkflow(
     window.removeEventListener('beforeunload', beforeUnload)
   })
   watch(
-    () => auth.token,
+    [() => auth.token, () => auth.loginGeneration, () => auth.permissions.join('\0')],
     () => {
       generation += 1
       visible.value = false
       error.value = ''
       saving.value = false
+      id.value = ''
+      version.value = 0
+      updatedAtMs.value = null
+      baseRevision.value = null
     },
     { flush: 'sync' },
   )
   return {
+    id,
     saving,
     error,
     dirty,

@@ -3,6 +3,7 @@ package com.richard.fyoung.customeradmin.aiconfig.agent.controller;
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import cn.dev33.satoken.annotation.SaMode;
 import cn.dev33.satoken.stp.StpUtil;
+import static com.richard.fyoung.customeradmin.aiconfig.agent.dto.AgentDraftIds.UUID_PATTERN;
 import com.richard.fyoung.customeradmin.aiconfig.agent.dto.AgentDraftSaveRequest;
 import com.richard.fyoung.customeradmin.aiconfig.agent.dto.AgentDraftVO;
 import com.richard.fyoung.customeradmin.aiconfig.agent.service.AgentDraftService;
@@ -27,7 +28,6 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/aiconfig/agent-drafts")
 @SaCheckPermission("agent:view")
 public class AgentDraftController {
-    private static final String UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
     private final AgentDraftService drafts;
 
     public AgentDraftController(AgentDraftService drafts) {

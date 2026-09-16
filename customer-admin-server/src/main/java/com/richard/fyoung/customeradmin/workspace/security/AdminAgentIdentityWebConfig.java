@@ -15,6 +15,7 @@ public class AdminAgentIdentityWebConfig implements WebMvcConfigurer {
             .addPathPatterns(
                 "/api/workspace/**",
                 "/api/aiconfig/agent-task/**",
+                "/api/aiconfig/agent-drafts/*/trials/**",
                 "/api/aiconfig/agent/*/memory")
             // 先建立身份，再由后续配额拦截器在真正调模型的路径上判定与记账。
             .order(Ordered.LOWEST_PRECEDENCE - 20);

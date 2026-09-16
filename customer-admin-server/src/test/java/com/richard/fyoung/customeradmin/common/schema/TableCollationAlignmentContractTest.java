@@ -17,6 +17,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
@@ -54,9 +55,9 @@ class TableCollationAlignmentContractTest {
     private static final Pattern CREATE_TABLE = Pattern.compile(
         "CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?`?([A-Za-z0-9_]+)`?\\s*\\(",
         Pattern.CASE_INSENSITIVE);
-    /** 兼容裸 ALTER 与 V22/V100 那种包在预处理语句字符串字面量里的写法。 */
-    private static final Pattern ALTER_CONVERT = Pattern.compile(
-        "ALTER\\s+TABLE\\s+`?([A-Za-z0-9_]+)`?\\s+CONVERT\\s+TO\\s+CHARACTER\\s+SET\\s+"
+    /** 兼容整表转换和仅修改表默认值；两者都改变表排序规则，身份列的保留另由真实迁移验证。 */
+    private static final Pattern ALTER_COLLATION = Pattern.compile(
+        "ALTER\\s+TABLE\\s+`?([A-Za-z0-9_]+)`?\\s+(?:CONVERT\\s+TO\\s+|DEFAULT\\s+)CHARACTER\\s+SET\\s+"
             + "([A-Za-z0-9_]+)\\s*(?:COLLATE\\s+([A-Za-z0-9_]+))?",
         Pattern.CASE_INSENSITIVE);
     private static final Pattern DROP_TABLE = Pattern.compile(
@@ -134,6 +135,22 @@ class TableCollationAlignmentContractTest {
                 + String.join("\n  ", divergent));
     }
 
+    @Test
+    @DisplayName("仅调整表默认排序规则的增量 DDL 也必须参与终态核对")
+    void defaultCharacterSetChangesTheTableWithoutRequiringIdentityColumnConversion() throws IOException {
+        Path migration = Files.createTempFile("collation-default-contract-", ".sql");
+        try {
+            Files.writeString(migration, """
+                CREATE TABLE trial_receipt (id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY)
+                    ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+                ALTER TABLE trial_receipt DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+                """, StandardCharsets.UTF_8);
+            assertEquals(TARGET_COLLATION, replay(List.of(migration)).get("trial_receipt"));
+        } finally {
+            Files.deleteIfExists(migration);
+        }
+    }
+
     /** 回放建表与转换语句，断言终态全部落在目标排序规则。 */
     private void assertAllTablesAligned(String scope, List<Path> files) throws IOException {
         Map<String, String> finalState = replay(files);
@@ -172,11 +189,11 @@ class TableCollationAlignmentContractTest {
                     firstGroup(TABLE_OPTION_CHARSET, tail), firstGroup(TABLE_OPTION_COLLATE, tail)));
             }
 
-            Matcher convert = ALTER_CONVERT.matcher(sql);
-            while (convert.find()) {
-                String table = convert.group(1);
+            Matcher alter = ALTER_COLLATION.matcher(sql);
+            while (alter.find()) {
+                String table = alter.group(1);
                 if (tables.containsKey(table)) {
-                    tables.put(table, resolveCollation(convert.group(2), convert.group(3)));
+                    tables.put(table, resolveCollation(alter.group(2), alter.group(3)));
                 }
             }
 

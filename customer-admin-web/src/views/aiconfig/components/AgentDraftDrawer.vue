@@ -4,7 +4,7 @@ import { deleteAgentDraft, getAgentDraft, listAgentDrafts, type AgentDraft } fro
 import { getRequestErrorMessage } from '@/api/request'
 import { useAuthStore } from '@/store/auth'
 const visible = defineModel<boolean>({ required: true })
-const emit = defineEmits<{ restore: [draft: AgentDraft] }>()
+const emit = defineEmits<{ restore: [draft: AgentDraft]; trial: [draft: AgentDraft] }>()
 const auth = useAuthStore()
 const drafts = ref<AgentDraft[]>([])
 const loading = ref(false)
@@ -23,7 +23,7 @@ watch(visible, (open) => {
   }
 })
 watch(
-  () => auth.token,
+  [() => auth.token, () => auth.loginGeneration, () => auth.permissions.join("\0")],
   () => {
     generation += 1
     visible.value = false
@@ -101,6 +101,8 @@ async function remove(row: AgentDraft) {
             @click="restore(draft)"
             >继续编辑</el-button
           >
+          <el-button :disabled="!!busy || !auth.hasPermission(draft.agentId ? 'agent:edit' : 'agent:add')"
+            @click="emit('trial', draft)">受控试用</el-button>
           <el-button :disabled="!!busy" @click="remove(draft)">删除</el-button>
         </div>
       </article>

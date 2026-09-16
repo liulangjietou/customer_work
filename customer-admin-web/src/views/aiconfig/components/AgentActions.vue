@@ -4,14 +4,15 @@ import { useAuthStore } from '@/store/auth'
 import type { AgentVO } from '@/types/api'
 
 const props = defineProps<{ agent: AgentVO; canOpen: boolean; prominent?: boolean }>()
-defineEmits<{ open: []; edit: []; toggle: []; memory: []; delete: [] }>()
+defineEmits<{ open: []; edit: []; toggle: []; memory: []; publication: []; delete: [] }>()
 const auth = useAuthStore()
 const canReadMemory = computed(
   () => auth.hasPermission('agent:view') && props.agent.capabilities?.includes('memory'),
 )
+const canCheckPublication = computed(() => auth.hasPermission('agent:view') && auth.hasPermission('eval:view'))
 const hasMoreActions = computed(
   () =>
-    auth.hasPermission('agent:edit') || auth.hasPermission('agent:delete') || canReadMemory.value,
+    auth.hasPermission('agent:edit') || auth.hasPermission('agent:delete') || canReadMemory.value || canCheckPublication.value,
 )
 </script>
 
@@ -33,6 +34,7 @@ const hasMoreActions = computed(
       ></el-button>
       <template #dropdown>
         <el-dropdown-menu>
+          <el-dropdown-item v-if="canCheckPublication" @click="$emit('publication')">发布检查</el-dropdown-item>
           <el-dropdown-item v-if="auth.hasPermission('agent:edit')" @click="$emit('toggle')">{{
             agent.status === 1 ? '停用智能体' : '启用智能体'
           }}</el-dropdown-item>
@@ -41,7 +43,7 @@ const hasMoreActions = computed(
           >
           <el-dropdown-item
             v-if="auth.hasPermission('agent:delete')"
-            :divided="auth.hasPermission('agent:edit') || canReadMemory"
+            :divided="auth.hasPermission('agent:edit') || canReadMemory || canCheckPublication"
             class="danger-action"
             @click="$emit('delete')"
             >删除智能体</el-dropdown-item
