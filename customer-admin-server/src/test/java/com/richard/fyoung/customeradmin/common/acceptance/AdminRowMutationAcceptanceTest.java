@@ -43,6 +43,15 @@ import com.richard.fyoung.customeradmin.contentguard.service.SensitiveWordServic
 import com.richard.fyoung.customeradmin.datascope.DataScope;
 import com.richard.fyoung.customeradmin.datascope.DataScopeContext;
 import com.richard.fyoung.customeradmin.datascope.DataScopeProperties;
+import com.richard.fyoung.customeradmin.dict.config.DictGatewayProvider;
+import com.richard.fyoung.customeradmin.dict.dto.DictItemSaveRequest;
+import com.richard.fyoung.customeradmin.dict.dto.DictTypeSaveRequest;
+import com.richard.fyoung.customeradmin.dict.service.DictService;
+import com.richard.fyoung.customeradmin.subjectquota.config.SubjectQuotaGatewayProvider;
+import com.richard.fyoung.customeradmin.system.loginimage.dto.LoginImageReorderRequest;
+import com.richard.fyoung.customeradmin.system.loginimage.mapper.LoginCarouselImageMapper;
+import com.richard.fyoung.customeradmin.system.loginimage.service.LoginCarouselImageService;
+import com.richard.fyoung.customeradmin.system.loginimage.service.LoginImageStorageService;
 import com.richard.fyoung.customeradmin.system.permission.mapper.SysPermissionMapper;
 import com.richard.fyoung.customeradmin.system.role.dto.RoleSaveRequest;
 import com.richard.fyoung.customeradmin.system.role.mapper.SysRoleMapper;
@@ -66,6 +75,11 @@ import com.richard.fyoung.customeradmin.workspace.project.service.ProjectService
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
 import com.richard.fyoung.customeradmin.workspace.session.service.WorkspaceSessionGuard;
+import com.richard.fyoung.customerwork.safety.subjectquota.MybatisSubjectQuotaHitStore;
+import com.richard.fyoung.customerwork.safety.subjectquota.MybatisSubjectQuotaLevelStore;
+import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectType;
+import com.richard.fyoung.customerwork.safety.subjectquota.SubjectExceedAction;
+import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaLevel;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import java.net.InetSocketAddress;
 import java.net.Socket;
@@ -365,6 +379,143 @@ class AdminRowMutationAcceptanceTest {
         verifyNoInteractions(history);
     }
 
+
+    @Test
+    void dictionaryChangesReachEnabledOptionsAndCannotTouchAnotherTenant() {
+        var provider = new DictGatewayProvider(customerProperties(), new AdminCrossDbTenantPlugins(tenantProperties));
+        try {
+            var service = new DictService(provider);
+            var type = new DictTypeSaveRequest();
+            type.setDictType("acceptance_dict");
+            type.setTypeName("验收字典");
+            service.createType(type);
+            var item = new DictItemSaveRequest();
+            item.setItemKey("ready");
+            item.setItemLabel("已就绪");
+            item.setSort(1);
+            item.setEnabled(true);
+            service.createItem(type.getDictType(), item);
+            long ownType = service.listTypes().stream().filter(t -> t.getDictType().equals(type.getDictType())).findFirst().orElseThrow().getId();
+            long ownItem = service.listItems(type.getDictType()).get(0).getId();
+            assertEquals(1, service.options(type.getDictType()).size());
+            assertThrows(BizException.class, () -> service.deleteType(ownType));
+            var foreignType = new DictTypeSaveRequest();
+            foreignType.setDictType("foreign_acceptance_dict");
+            foreignType.setTypeName("其他租户字典");
+            TenantContext.runWith("other-tenant", () -> {
+                service.createType(foreignType);
+                service.createItem(foreignType.getDictType(), item);
+            });
+            long foreignItem = TenantContext.callWith("other-tenant", () -> service.listItems(foreignType.getDictType()).get(0).getId());
+            assertTrue(service.listItems(foreignType.getDictType()).isEmpty());
+            assertThrows(BizException.class, () -> service.updateItem(foreignItem, item));
+            item.setItemLabel("已核对");
+            item.setEnabled(false);
+            service.updateItem(ownItem, item);
+            assertEquals("已核对", service.listItems(type.getDictType()).get(0).getItemLabel());
+            assertTrue(service.options(type.getDictType()).isEmpty());
+            service.deleteItem(ownItem);
+            service.deleteType(ownType);
+            assertEquals(0, customerJdbc.queryForObject("SELECT COUNT(*) FROM cw_dict_item WHERE id=?", Integer.class, ownItem));
+            assertEquals(1, customerJdbc.queryForObject("SELECT COUNT(*) FROM cw_dict_item WHERE id=?", Integer.class, foreignItem));
+        } finally {
+            provider.close();
+        }
+    }
+
+    @Test
+    void carouselToggleOrderAndDeleteReachPublicListAndOnlyOwnObjectCleanup() throws Exception {
+        long first = 997001L;
+        long second = 997002L;
+        adminJdbc.update("INSERT INTO login_carousel_image(id,image_name,image_url,sort_order,enabled) "
+            + "VALUES (?,'验收图一','/api/login-images/acceptance-first.png',1,1),(?,'验收图二','/api/login-images/acceptance-second.png',2,1)", first, second);
+        var storage = mock(LoginImageStorageService.class);
+        var service = new LoginCarouselImageService(adminTemplate().getMapper(LoginCarouselImageMapper.class), storage);
+        service.updateEnabled(first, false);
+        assertFalse(service.listEnabledUrls().contains("/api/login-images/acceptance-first.png"));
+        service.updateEnabled(first, true);
+        service.reorder(new LoginImageReorderRequest(List.of(second, first)));
+        assertEquals(List.of("/api/login-images/acceptance-second.png", "/api/login-images/acceptance-first.png"), service.listEnabledUrls());
+        service.delete(first);
+        assertEquals(List.of("/api/login-images/acceptance-second.png"), service.listEnabledUrls());
+        assertEquals(1, adminJdbc.queryForObject("SELECT deleted FROM login_carousel_image WHERE id=?", Integer.class, first));
+        verify(storage).delete("/api/login-images/acceptance-first.png");
+    }
+
+    @Test
+    void privilegedQuotaLookupStillSeparatesExactTenantIdentifiers() {
+        // 配额 Store 刻意跨租户加载，不能依赖公共租户拦截器补上其显式 tenantId 的比较语义。
+        customerJdbc.update("INSERT INTO cw_subject_quota_level(tenant_id,level_code,level_name) "
+            + "VALUES ('quota-case','own-read','本租户等级'),('QUOTA-CASE','foreign-read','其他租户等级')");
+        var provider = new SubjectQuotaGatewayProvider(customerProperties(), new AdminCrossDbTenantPlugins(tenantProperties));
+        try {
+            var store = new MybatisSubjectQuotaLevelStore(provider.get().levelMapper());
+            assertEquals(List.of("own-read"), store.findByTenant("quota-case").stream().map(level -> level.levelCode()).toList());
+        } finally {
+            provider.close();
+        }
+    }
+
+    @Test
+    void privilegedQuotaDeleteCannotRemoveCaseVariantTenantLevel() {
+        customerJdbc.update("INSERT INTO cw_subject_quota_level(tenant_id,level_code,level_name) "
+            + "VALUES ('QUOTA-DELETE','foreign-delete','其他租户等级')");
+        var provider = new SubjectQuotaGatewayProvider(customerProperties(), new AdminCrossDbTenantPlugins(tenantProperties));
+        try {
+            var store = new MybatisSubjectQuotaLevelStore(provider.get().levelMapper());
+            store.delete("quota-delete", "foreign-delete");
+            assertEquals(1, customerJdbc.queryForObject("SELECT COUNT(*) FROM cw_subject_quota_level WHERE BINARY tenant_id='QUOTA-DELETE' AND level_code='foreign-delete'", Integer.class));
+        } finally {
+            provider.close();
+        }
+    }
+
+    @Test
+    void privilegedQuotaSaveCannotTakeOverCaseVariantTenantLevel() {
+        customerJdbc.update("INSERT INTO cw_subject_quota_level(tenant_id,level_code,level_name) "
+            + "VALUES ('QUOTA-SAVE','protected-save','其他租户等级')");
+        var provider = new SubjectQuotaGatewayProvider(customerProperties(), new AdminCrossDbTenantPlugins(tenantProperties));
+        try {
+            var store = new MybatisSubjectQuotaLevelStore(provider.get().levelMapper());
+            try {
+                store.save(new SubjectQuotaLevel(null, "quota-save", "protected-save", "本租户等级",
+                    QuotaSubjectType.USER, 1800, 50000, 100, SubjectExceedAction.BLOCK, true, null));
+                assertEquals(List.of("本租户等级"), store.findByTenant("quota-save").stream().map(SubjectQuotaLevel::levelName).toList());
+            } catch (org.springframework.dao.DuplicateKeyException conflict) {
+                // 存量不区分大小写的唯一索引可以拒绝同码插入，但绝不能挪用另一个租户的记录。
+            }
+            assertEquals("其他租户等级", customerJdbc.queryForObject("SELECT level_name FROM cw_subject_quota_level "
+                + "WHERE BINARY tenant_id='QUOTA-SAVE' AND level_code='protected-save'", String.class));
+        } finally {
+            provider.close();
+        }
+    }
+
+    @Test
+    void privilegedQuotaHitDetailsAndRankKeepExactTenantBoundary() {
+        customerJdbc.update("INSERT INTO cw_subject_quota_hit(tenant_id,subject_type,subject_id,limit_kind,created_at_ms) "
+            + "VALUES ('quota-hits','USER','own-subject','REQUEST',100),('QUOTA-HITS','USER','foreign-subject','REQUEST',200)");
+        var provider = new SubjectQuotaGatewayProvider(customerProperties(), new AdminCrossDbTenantPlugins(tenantProperties));
+        try {
+            var store = new MybatisSubjectQuotaHitStore(provider.get().hitMapper());
+            org.junit.jupiter.api.Assertions.assertAll(
+                () -> assertEquals(List.of("own-subject"), store.findRecent("quota-hits", 0, 20).stream().map(hit -> hit.subjectId()).toList()),
+                () -> assertEquals(List.of("own-subject"), store.rank("quota-hits", 0, 20).stream().map(hit -> hit.getSubjectId()).toList()));
+        } finally {
+            provider.close();
+        }
+    }
+
+    private static CustomerWorkDbProperties customerProperties() {
+        var properties = new CustomerWorkDbProperties();
+        properties.setHost(HOST);
+        properties.setPort(PORT);
+        properties.setUsername(USER);
+        properties.setPassword(PASSWORD);
+        properties.setDatabase(OWN_DATABASES.get(1));
+        return properties;
+    }
+
     private static void seedAgent(long id, String code) {
         adminJdbc.update("INSERT INTO ai_agent(id,tenant_id,agent_name,agent_code,model_id,status) "
             + "VALUES (?,'row-acceptance','验收智能体',?,1,1)", id, code);
@@ -388,6 +539,7 @@ class AdminRowMutationAcceptanceTest {
         configuration.addMapper(AiChannelRobotMapper.class);
         configuration.addMapper(AiProjectMapper.class);
         configuration.addMapper(AiProjectSessionMapper.class);
+        configuration.addMapper(LoginCarouselImageMapper.class);
         factory.setConfiguration(configuration);
         factory.setPlugins(new MybatisPlusConfig().mybatisPlusInterceptor(tenantProperties, new DataScopeProperties()));
         var sqlFactory = factory.getObject();

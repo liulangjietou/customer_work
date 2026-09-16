@@ -1,4 +1,4 @@
-import { onScopeDispose, reactive, ref, watch } from 'vue'
+import { onScopeDispose, ref, watch } from 'vue'
 import type { Ref } from 'vue'
 import type { FormInstance } from 'element-plus'
 import type { PageQuery, PageResult } from '@/types/api'
@@ -6,7 +6,9 @@ import { usePagedList } from './usePagedList'
 import { useAuthStore } from '@/store/auth'
 import { useAuthSubmissionScope } from './useAuthSubmissionScope'
 
-export type CrudDialogMode = 'create' | 'edit'
+import { useCrudForm, type CrudDialogMode } from './useCrudForm'
+
+export type { CrudDialogMode } from './useCrudForm'
 
 /**
  * 标准管理页 CRUD 选项。
@@ -64,50 +66,16 @@ export function useCrudPage<VO, Q extends PageQuery, F extends object>(
   )
   const auth = useAuthStore()
   const captureSubmission = useAuthSubmissionScope()
-  let dialogGeneration = 0
+  const formState = useCrudForm<VO, F>({ ...options, onSaved: loadList })
   let deleteGeneration = 0
-  const submitting = ref(false)
   const deletingId = ref<number | null>(null)
-
-  const dialogVisible = ref(false)
-  const dialogMode = ref<CrudDialogMode>('create')
-  const editingId = ref<number | null>(null)
-  const form = reactive(options.initForm()) as F
-
   const rowId = options.rowId ?? ((row: VO) => (row as { id: number }).id)
 
-  function invalidateDialog() {
-    dialogGeneration += 1
-    submitting.value = false
-  }
-
-  // 关闭或重开表单后，旧校验与保存结果不能占用后来编辑的目标。
-  watch(dialogVisible, visible => { if (!visible) invalidateDialog() }, { flush: 'sync' })
   watch([() => auth.loginGeneration, () => auth.token, () => auth.permissions.join('\0')], () => {
-    invalidateDialog()
     deleteGeneration += 1
     deletingId.value = null
-    dialogVisible.value = false
-    editingId.value = null
-    Object.assign(form, options.initForm())
   }, { flush: 'sync' })
-  onScopeDispose(() => { invalidateDialog(); deleteGeneration += 1 })
-
-  function openCreate() {
-    invalidateDialog()
-    dialogMode.value = 'create'
-    editingId.value = null
-    Object.assign(form, options.initForm())
-    dialogVisible.value = true
-  }
-
-  function openEdit(row: VO) {
-    invalidateDialog()
-    dialogMode.value = 'edit'
-    editingId.value = rowId(row)
-    Object.assign(form, options.toForm ? options.toForm(row) : options.initForm())
-    dialogVisible.value = true
-  }
+  onScopeDispose(() => { deleteGeneration += 1 })
 
   /** API 拦截器已提示写入失败；事件入口消费拒绝并保留表单，避免再抛为页面未处理异常。 */
   async function tryWrite(action: Promise<unknown>): Promise<boolean> {
@@ -116,52 +84,6 @@ export function useCrudPage<VO, Q extends PageQuery, F extends object>(
       return true
     } catch {
       return false
-    }
-  }
-
-  async function handleSubmit() {
-    if (submitting.value || !dialogVisible.value) {
-      return
-    }
-    const generation = dialogGeneration
-    const mode = dialogMode.value
-    const id = editingId.value
-    const isCurrentIdentity = captureSubmission()
-    const isCurrent = () => isCurrentIdentity() && generation === dialogGeneration && dialogVisible.value
-    if (!isCurrent()) return
-    submitting.value = true
-    try {
-      if (options.formRef) {
-        const valid = await options.formRef.value?.validate().catch(() => false)
-        if (!valid) {
-          return
-        }
-      }
-      if (!isCurrent()) return
-      if (options.beforeSubmit && !options.beforeSubmit(mode, form)) {
-        return
-      }
-      if (!isCurrent()) return
-      if (mode === 'create' && options.create) {
-        if (!await tryWrite(options.create({ ...form }))) return
-        if (!isCurrent()) return
-        ElMessage.success(options.messages?.created ?? '新建成功')
-      } else if (mode === 'edit' && options.update) {
-        if (!id) {
-          return
-        }
-        if (!await tryWrite(options.update(id, { ...form }))) return
-        if (!isCurrent()) return
-        ElMessage.success(options.messages?.updated ?? '保存成功')
-      } else {
-        return
-      }
-      dialogVisible.value = false
-      await loadList()
-    } catch (error) {
-      if (isCurrent()) throw error
-    } finally {
-      if (isCurrent()) submitting.value = false
     }
   }
 
@@ -206,22 +128,15 @@ export function useCrudPage<VO, Q extends PageQuery, F extends object>(
   }
 
   return {
+    ...formState,
     loading,
     loadError,
-    submitting,
     deletingId,
     list,
     total,
     query,
-    dialogVisible,
-    dialogMode,
-    editingId,
-    form,
     loadList,
     handleSearch,
-    openCreate,
-    openEdit,
-    handleSubmit,
     handleDelete,
   }
 }

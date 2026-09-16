@@ -15,7 +15,7 @@
                COUNT(*)        AS hitCount,
                MAX(created_at_ms) AS lastHitAtMs
         FROM cw_subject_quota_hit
-        WHERE tenant_id = #{tenantId}
+        WHERE CAST(tenant_id AS BINARY) = CAST(#{tenantId} AS BINARY)
           AND created_at_ms &gt;= #{sinceMs}
         GROUP BY subject_type, subject_id
         ORDER BY hitCount DESC, lastHitAtMs DESC

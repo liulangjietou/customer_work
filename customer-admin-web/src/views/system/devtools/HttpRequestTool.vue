@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import CrudLoadState from '@/components/CrudLoadState.vue'
+import { useQueryState } from '@/composables/useQueryState'
+import { useAuthStore } from '@/store/auth'
 import hljs from 'highlight.js/lib/core'
 import json from 'highlight.js/lib/languages/json'
 import { sendHttpRequest, type HttpKeyValueItem, type HttpSendResponse } from '@/api/devtools'
@@ -29,8 +32,10 @@ const rawContentType = usePersistedRef('http:rawContentType', 'text/plain')
 
 const activeRequestTab = ref('params')
 const activeResponseTab = ref('body')
-const sending = ref(false)
-const response = ref<HttpSendResponse | null>(null)
+const auth = useAuthStore()
+const { data: response, loading: sending, error: sendError, load: sendRequest, reset: resetResponse } = useQueryState<HttpSendResponse | null>(
+  () => sendHttpRequest({ method: method.value, url: buildUrl(), headers: buildHeaders(), body: buildBody() }), () => null,
+)
 
 const methodHasBody = computed(() => !NO_BODY_METHODS.has(method.value))
 
@@ -88,26 +93,14 @@ function formatJsonBody() {
 }
 
 async function send() {
-  const target = url.value.trim()
-  if (!target) {
+  if (sending.value || !auth.hasPermission('devtools:view')) return
+  if (!url.value.trim()) {
     ElMessage.error('请输入请求 URL')
     return
   }
-  sending.value = true
-  response.value = null
-  try {
-    response.value = await sendHttpRequest({
-      method: method.value,
-      url: buildUrl(),
-      headers: buildHeaders(),
-      body: buildBody(),
-    })
-    activeResponseTab.value = 'body'
-  } catch {
-    // 业务失败（SSRF 拦截/参数非法等）request.ts 拦截器已统一弹出错误消息，这里无需重复处理
-  } finally {
-    sending.value = false
-  }
+  resetResponse()
+  const accepted = await sendRequest()
+  if (accepted) activeResponseTab.value = 'body'
 }
 
 const statusTagType = computed(() => {
@@ -221,6 +214,7 @@ function formatBytes(bytes: number | null): string {
       </el-tab-pane>
     </el-tabs>
 
+    <CrudLoadState :error="sendError" :has-stale-data="false" :loading="sending" @retry="send" />
     <template v-if="response">
       <el-divider content-position="left">响应</el-divider>
 

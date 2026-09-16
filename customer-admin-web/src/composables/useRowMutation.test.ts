@@ -88,3 +88,23 @@ it('没有写权限时不请求也不触发成功回调', async () => {
   expect(write).not.toHaveBeenCalled()
   expect(success).not.toHaveBeenCalled()
 })
+
+it('字符串目标的确认框等待期间重登，确认后也不能发出旧写入', async () => {
+  const mutation = scope.run(() => useRowMutation<string>('tool:edit'))!
+  const confirmation = deferred()
+  const write = vi.fn()
+  const success = vi.fn()
+  const action = mutation.run('vip', async current => {
+    await confirmation.promise
+    if (current()) await write('vip')
+  }, success)
+  expect(mutation.isPending('vip')).toBe(true)
+  useAuthStore().applyLoginResult({ token: 'same-token', nickname: '新登录', forceChangePassword: false,
+    approvalStatus: 'APPROVED', approvalRemark: null }, 'admin')
+  useAuthStore().permissions = ['tool:edit']
+  confirmation.resolve()
+  await action
+  expect(write).not.toHaveBeenCalled()
+  expect(success).not.toHaveBeenCalled()
+  expect(mutation.isPending('vip')).toBe(false)
+})
