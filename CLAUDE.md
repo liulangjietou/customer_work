@@ -80,6 +80,35 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   `MINIO_ENDPOINT/MINIO_ACCESS_KEY/MINIO_SECRET_KEY` 覆盖）。测试只创建和清理随机独占桶；CI
   自动启动与项目 compose 同版本的 MinIO 并等待健康检查，不把对象存储不可达当成通过或跳过。
 - 测试数量随分支持续变化，不把固定总数作为门禁；以本节全模块命令的当前 `BUILD SUCCESS`、0 失败、0 错误为准。
+  （2026-09-16 客服主链路接入 Harness 长会话压缩批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
+  starter 2164/6 skip、app-server 302、customer-channel 82、admin 2257/1 skip、gateway 1，
+  **合计 4806**（排除 `RedisSessionPersistenceTest`）。**本条与上一条脚注（3882）之间的跳跃
+  不是本批次产生的**——2026-09-11～09-15 的多个批次（知识候选闭环、个人草稿试用、Badcase 词表等，
+  详见本文件顶部迁移版本号提醒）只推进了 Flyway 版本号，没有留下全量测试实测快照，累积增量都体现在
+  这次的实测数字里，不可与 3882 直接相减。本批次自身只加 starter **+3**
+  （`HarnessAgentFactoryTest` 显式关闭压缩场景 1 条 + 新增 `CustomerServiceHarnessRoutingTest` 2 条）。
+  本批次无迁移，cw Flyway 仍是下次 **V24**、admin 不受影响。核心改动：`ContextProperties.compressionEnabled`
+  / `budgetEnabled`、`HarnessProperties.enabled` 三个开关默认值 `false`→`true`；
+  `CustomerServiceService.resolveAgent` 按 `harness.enabled` 在 `ReActAgent`（轻量主链路）与
+  `HarnessAgent`（长会话压缩保护）间路由，chat/chatStream/WS 三条客服链路共用这条构建路径，
+  customer-channel 与 `/consult` 多 Agent（`MultiAgentOrchestrator`）不受影响（前者绑定具体
+  `ReActAgent` 类型自有理由，后者是独立的自研并发架构）。三条经验：
+  ① **`Agent` 接口没有 `RuntimeContext` 重载**：反编译实证 `call(String, RuntimeContext)` /
+  `streamEvents(List, RuntimeContext)` / `interrupt(RuntimeContext)` 三个客服链路核心调用，
+  在 `ReActAgent` 与 `HarnessAgent` 各自的具体类上都存在、签名一致，但都没有被提到二者共同的
+  `Agent` 接口——按接口类型持有引用后这三处直接编译不过。解法复用项目已有的
+  `AgentResourceCloser.closeQuietly(Agent, ...)` 同款 `instanceof HarnessAgent`/`ReActAgent`
+  分派模式，而不是引入新的适配器接口；
+  ② **精简测试构造要让新协作对象可为 null，不能让默认值改动意外牵连**：`CustomerServiceService`
+  的 2/3 参"无指标构造"专供单测，改前 `resolveAgent` 只认 `agentFactory`；若 `harness.enabled`
+  默认值改真后这些构造仍不传 `harnessAgentFactory`，会导致所有基于假 `ReActAgent` mock 的既有测试
+  意外滑入从未 stub 过的 Harness 构建路径。收敛为「`harnessAgentFactory` 为 null 时无视
+  `harness.enabled` 恒走轻量路径」，只有 Spring 主构造真正注入，测试文件零改动；
+  ③ **改 `@ConfigurationProperties` 默认值要同步两处断言**：`HarnessAgentFactoryTest` 里
+  "默认配置不挂载 Compaction" 的断言需要反转为"默认挂载"；`YmlTrimEquivalenceTest` 依赖的
+  `application-ymlbaseline.yml` 里 `compression-enabled`/`harness.enabled` 显式声明的旧值
+  同样要跟着改，否则"瘦身前后 binding 结果一致"这条断言会因为两边不再等价而变红——
+  这与本文件早年记录的"翻转默认值打红 YmlTrimEquivalenceTest"是同一个坑，只是这次一次改了三个开关。）
   （2026-09-10 MCP 契约漂移 + 编排拓扑可配批次实测：全模块 BUILD SUCCESS，0 失败 0 错误，
   starter 1911/6 skip、app-server 137、customer-channel 82、admin 1751/1 skip、gateway 1，
   **合计 3882**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+24**

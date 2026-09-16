@@ -17,8 +17,15 @@ import java.util.Map;
  */
 @Data
 public class HarnessProperties {
-    /** 是否启用 HarnessAgent 包装（叠加 Plan Mode / Compaction / Subagent / Workspace）。默认关闭。 */
-    private boolean enabled = false;
+    /**
+     * 是否启用 HarnessAgent 包装（叠加 Plan Mode / Compaction / Subagent / Workspace）。
+     *
+     * <p>默认开启：客服主链路（chat/chatStream/WS，见 {@code CustomerServiceService#resolveAgent}）
+     * 借此升级为 {@code HarnessAgent} 以获得 {@link ContextProperties#isCompressionEnabled() compaction}
+     * 的长会话保护。其余子能力（subagent/sandbox/plan mode/memory 等）各自独立开关默认仍关闭，
+     * 本开关只决定"要不要叠加 Harness 这层"，不代表全部子能力一起打开。</p>
+     */
+    private boolean enabled = true;
     /** 工作区 / 沙箱根目录（文件工具、代码执行、子智能体的隔离工作区）。 */
     private String workspaceDir = RuntimeWorkDir.of("workspace");
     /** 分层记忆：启用 MEMORY.md 持久画像 + 会话沉淀 + 自动 consolidation（MemoryConfig）。 */

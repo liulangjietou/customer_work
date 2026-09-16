@@ -3,6 +3,7 @@ package com.richard.fyoung.customerwork.core.service;
 import com.richard.fyoung.customerwork.capability.dialog.DialogStageService;
 import com.richard.fyoung.customerwork.core.agent.CustomerServiceAgentFactory;
 import com.richard.fyoung.customerwork.core.agent.AgentResourceCloser;
+import com.richard.fyoung.customerwork.core.agent.HarnessAgentFactory;
 import com.richard.fyoung.customerwork.core.memory.MemorySubjectKey;
 import com.richard.fyoung.customerwork.core.memory.MemorySubjectResolver;
 import com.richard.fyoung.customerwork.core.model.failover.FailoverModel;
@@ -24,10 +25,13 @@ import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordFilter;
 import com.richard.fyoung.customerwork.safety.sensitiveword.SensitiveWordStreamGuard;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import io.agentscope.core.ReActAgent;
+import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.RuntimeContext;
+import io.agentscope.core.event.AgentEvent;
 import io.agentscope.core.event.AgentResultEvent;
 import io.agentscope.core.event.TextBlockDeltaEvent;
 import io.agentscope.core.message.Msg;
+import io.agentscope.harness.agent.HarnessAgent;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -102,6 +106,12 @@ public class CustomerServiceService {
     private static final int CACHED_ANSWER_CHUNK_SIZE = 24;
 
     private final CustomerServiceAgentFactory agentFactory;
+    /**
+     * 可为 null：只有 Spring 主构造会注入。为 null 时 {@link #resolveAgent} 无视
+     * {@code harness.enabled} 恒走轻量 {@link CustomerServiceAgentFactory} 路径——
+     * 单测用的精简构造本就不该意外滑入 Harness 装配（那部分行为由 HarnessAgentFactoryTest 单独覆盖）。
+     */
+    private final HarnessAgentFactory harnessAgentFactory;
     private final SessionStateManager sessionStateManager;
     private final CustomerWorkProperties properties;
     /** 可为 null：未接入 Micrometer 时降级为无指标（仅日志），不影响主链路。 */
@@ -124,7 +134,7 @@ public class CustomerServiceService {
      * Agent 创建时已绑定长期记忆，故缓存键必须包含可信租户和终端主体；只用客户端可控的
      * sessionId 会让不同租户或同租户不同用户复用第一位调用者的记忆代理。
      */
-    private final Map<AgentSessionKey, ReActAgent> sessionAgents;
+    private final Map<AgentSessionKey, Agent> sessionAgents;
 
     /** 与 Agent 工厂共用同一主体解析规则，保证缓存分区和长期记忆分区完全一致。 */
     private final MemorySubjectResolver memorySubjectResolver;
@@ -168,6 +178,7 @@ public class CustomerServiceService {
     /** Spring 注入构造：MeterRegistry 经 ObjectProvider 可选注入（actuator 缺席时降级为无指标）。 */
     @Autowired
     public CustomerServiceService(CustomerServiceAgentFactory agentFactory,
+                                  HarnessAgentFactory harnessAgentFactory,
                                   SessionStateManager sessionStateManager,
                                   CustomerWorkProperties properties,
                                   MemorySubjectResolver memorySubjectResolver,
@@ -178,7 +189,7 @@ public class CustomerServiceService {
                                   ObjectProvider<SemanticCacheService> semanticCacheProvider,
                                   ObjectProvider<CsatService> csatServiceProvider,
                                   ObjectProvider<DialogStageService> dialogStageServiceProvider) {
-        this(agentFactory, sessionStateManager, properties, memorySubjectResolver);
+        this(agentFactory, harnessAgentFactory, sessionStateManager, properties, memorySubjectResolver);
         this.dialogStageService = dialogStageServiceProvider == null
             ? null : dialogStageServiceProvider.getIfAvailable();
         this.meterRegistry = meterRegistryProvider.getIfAvailable();
@@ -205,7 +216,7 @@ public class CustomerServiceService {
                                   ObjectProvider<TenantQuotaGuard> quotaGuardProvider,
                                   ObjectProvider<SemanticCacheService> semanticCacheProvider,
                                   ObjectProvider<CsatService> csatServiceProvider) {
-        this(agentFactory, sessionStateManager, properties, new MemorySubjectResolver(),
+        this(agentFactory, null, sessionStateManager, properties, new MemorySubjectResolver(),
             meterRegistryProvider, sensitiveWordFilterProvider, sessionLockProvider,
             quotaGuardProvider, semanticCacheProvider, csatServiceProvider, null);
     }
@@ -220,21 +231,23 @@ public class CustomerServiceService {
     public CustomerServiceService(CustomerServiceAgentFactory agentFactory,
                                   SessionStateManager sessionStateManager,
                                   CustomerWorkProperties properties) {
-        this(agentFactory, sessionStateManager, properties, new MemorySubjectResolver());
+        this(agentFactory, null, sessionStateManager, properties, new MemorySubjectResolver());
     }
 
     private CustomerServiceService(CustomerServiceAgentFactory agentFactory,
+                                   HarnessAgentFactory harnessAgentFactory,
                                    SessionStateManager sessionStateManager,
                                    CustomerWorkProperties properties,
                                    MemorySubjectResolver memorySubjectResolver) {
         this.agentFactory = agentFactory;
+        this.harnessAgentFactory = harnessAgentFactory;
         this.sessionStateManager = sessionStateManager;
         this.properties = properties;
         this.memorySubjectResolver = memorySubjectResolver;
         this.sessionAgents = Collections.synchronizedMap(
-            new LinkedHashMap<AgentSessionKey, ReActAgent>(256, 0.75f, true) {
+            new LinkedHashMap<AgentSessionKey, Agent>(256, 0.75f, true) {
                 @Override
-                protected boolean removeEldestEntry(Map.Entry<AgentSessionKey, ReActAgent> eldest) {
+                protected boolean removeEldestEntry(Map.Entry<AgentSessionKey, Agent> eldest) {
                     boolean remove = size() > MAX_HOT_AGENTS;
                     if (remove) {
                         AgentResourceCloser.closeQuietly(eldest.getValue(),
@@ -362,12 +375,12 @@ public class CustomerServiceService {
     /** 真正走一遍 Agent（装配 + 知识检索 + 模型调用）——缓存未命中时才发生。 */
     private Mono<String> invokeAgent(AgentSessionKey sessionKey, String userText) {
         String sessionId = sessionKey.sessionId();
-        ReActAgent agent = resolveAgent(sessionKey);
+        Agent agent = resolveAgent(sessionKey);
         RuntimeContext ctx = agentFactory.contextFor(sessionId);
         bindCallMeta(ctx, agent, userText);
 
         return withSessionLock(sessionKey, () ->
-            agent.call(spotlightAttachments(userText), ctx)
+            callAgent(agent, spotlightAttachments(userText), ctx)
                 .map(Msg::getTextContent)
                 .doOnNext(reply -> log.info("[session {}] assistant reply: {}", sessionId, reply))
                 .onErrorResume(e -> {
@@ -505,7 +518,7 @@ public class CustomerServiceService {
      */
     private Flux<String> streamFromAgent(AgentSessionKey sessionKey, String userText, AtomicBoolean degraded) {
         String sessionId = sessionKey.sessionId();
-        ReActAgent agent = resolveAgent(sessionKey);
+        Agent agent = resolveAgent(sessionKey);
         RuntimeContext ctx = agentFactory.contextFor(sessionId);
         bindCallMeta(ctx, agent, userText);
 
@@ -515,7 +528,7 @@ public class CustomerServiceService {
             AtomicBoolean deltaSeen = new AtomicBoolean(false);
             // 出站敏感词过滤：每次订阅一个独立 guard（有状态，跨流复用会串内容）
             SensitiveWordStreamGuard guard = newOutboundGuard();
-            return applyOutboundGuard(agent.streamEvents(List.of(toUserMsg(spotlightAttachments(userText))), ctx)
+            return applyOutboundGuard(streamAgentEvents(agent, List.of(toUserMsg(spotlightAttachments(userText))), ctx)
                 // 旧的 stream(...) 在末尾自带 publishOn(boundedElastic)，streamEvents 没有：不切走
                 // 就会在模型 IO 线程上跑下游的敏感词过滤与 SSE 写出，拖慢模型侧的 chunk 读取
                 .publishOn(reactor.core.scheduler.Schedulers.boundedElastic())
@@ -641,13 +654,13 @@ public class CustomerServiceService {
      */
     public boolean interrupt(String sessionId) {
         AgentSessionKey sessionKey = sessionKey(sessionId);
-        ReActAgent agent = sessionAgents.get(sessionKey);
+        Agent agent = sessionAgents.get(sessionKey);
         if (agent == null) {
             log.info("[session {}] no active agent, ignore interrupt", sessionId);
             return false;
         }
         RuntimeContext ctx = agentFactory.contextFor(sessionId);
-        agent.interrupt(ctx);
+        interruptAgent(agent, ctx);
         log.info("[session {}] safe interrupt issued", sessionId);
         return true;
     }
@@ -677,7 +690,7 @@ public class CustomerServiceService {
 
     private void discardSession(AgentSessionKey sessionKey) {
         String sessionId = sessionKey.sessionId();
-        ReActAgent removed = sessionAgents.remove(sessionKey);
+        Agent removed = sessionAgents.remove(sessionKey);
         AgentResourceCloser.closeQuietly(removed, "customer-session-discard:" + sessionId);
         sessionActivity.remove(sessionKey);
         try {
@@ -749,7 +762,7 @@ public class CustomerServiceService {
      * （模型链是共享单例，无需重建 Agent 即生效；提示词/MCP/maxIters 绑定在 Agent 上，需重建）。</p>
      */
     public void flushHotAgents() {
-        List<ReActAgent> agents;
+        List<Agent> agents;
         synchronized (sessionAgents) {
             agents = new ArrayList<>(sessionAgents.values());
             sessionAgents.clear();
@@ -803,10 +816,46 @@ public class CustomerServiceService {
         }
     }
 
-    /** 获取热 Agent；未命中时新建（首次 call 自动从 StateStore 恢复历史，无需手工 load）。 */
-    private ReActAgent resolveAgent(AgentSessionKey sessionKey) {
-        return sessionAgents.computeIfAbsent(sessionKey,
-            key -> agentFactory.createAgent(key.sessionId()));
+    /**
+     * 获取热 Agent；未命中时新建（首次 call 自动从 StateStore 恢复历史，无需手工 load）。
+     *
+     * <p>{@code harness.enabled=true} 时升级为 {@link HarnessAgent}（获得 compaction 长会话保护），
+     * 否则走轻量 {@link ReActAgent}。{@code harnessAgentFactory} 为 null（单测精简构造）时恒走后者。</p>
+     */
+    private Agent resolveAgent(AgentSessionKey sessionKey) {
+        return sessionAgents.computeIfAbsent(sessionKey, key ->
+            properties.getHarness().isEnabled() && harnessAgentFactory != null
+                ? harnessAgentFactory.createHarnessAgent(key.sessionId())
+                : agentFactory.createAgent(key.sessionId()));
+    }
+
+    /**
+     * 分派 {@code call(String, RuntimeContext)}：该重载在 {@link ReActAgent} 与 {@link HarnessAgent}
+     * 各自的具体类上都存在、签名一致，但没有被提到二者共同的 {@link Agent} 接口——
+     * 与 {@code AgentResourceCloser} 处理 Toolkit 获取同一套 instanceof 分派模式。
+     */
+    private Mono<Msg> callAgent(Agent agent, String text, RuntimeContext ctx) {
+        if (agent instanceof HarnessAgent harnessAgent) {
+            return harnessAgent.call(text, ctx);
+        }
+        return ((ReActAgent) agent).call(text, ctx);
+    }
+
+    /** 分派 {@code streamEvents(List, RuntimeContext)}，理由同 {@link #callAgent}。 */
+    private Flux<AgentEvent> streamAgentEvents(Agent agent, List<Msg> messages, RuntimeContext ctx) {
+        if (agent instanceof HarnessAgent harnessAgent) {
+            return harnessAgent.streamEvents(messages, ctx);
+        }
+        return ((ReActAgent) agent).streamEvents(messages, ctx);
+    }
+
+    /** 分派 {@code interrupt(RuntimeContext)}，理由同 {@link #callAgent}。 */
+    private void interruptAgent(Agent agent, RuntimeContext ctx) {
+        if (agent instanceof HarnessAgent harnessAgent) {
+            harnessAgent.interrupt(ctx);
+            return;
+        }
+        ((ReActAgent) agent).interrupt(ctx);
     }
 
     /**
@@ -828,7 +877,7 @@ public class CustomerServiceService {
      * Agent 名称，会话类型固定 CHAT，question 为本轮用户输入；requestId 缺省交由中间件回退 MDC。绑定异常
      * 不影响主对话链路（采集为旁路，防御式兜底最终收敛在中间件）。</p>
      */
-    private void bindCallMeta(RuntimeContext ctx, ReActAgent agent, String userText) {
+    private void bindCallMeta(RuntimeContext ctx, Agent agent, String userText) {
         try {
             String agentName = agent == null ? null : agent.getName();
             ctx.put(AgentCallMeta.class, new AgentCallMeta(

@@ -149,15 +149,15 @@ customer-work:
       dataset-id: ""
       enable-rerank: true
   context:
-    # 智能上下文压缩（2.0 用 Harness Compaction 实现）：长对话上下文有界。默认关闭（开启需可用模型）
-    compression-enabled: false
+    # 智能上下文压缩（2.0 用 Harness Compaction 实现）：长对话上下文有界。默认开启（客服主链路据此升级为 HarnessAgent）
+    compression-enabled: true
     max-token: 8000
     msg-threshold: 40
     last-keep: 10
   harness:
     # AgentScope 2.0 Harness 新能力（详见 docs/MIGRATION-2.0.md）
     # 启用后由 HarnessAgentFactory 经 HarnessAgent.fromAgent(...) 叠加 Plan Mode / Compaction / Subagent / Workspace
-    enabled: false
+    enabled: true
     # 工作区 / 沙箱根目录（文件工具、代码执行、子智能体的隔离工作区）
     # 分层记忆：MEMORY.md 持久画像 + 会话沉淀 + 自动 consolidation
     memory-enabled: false
