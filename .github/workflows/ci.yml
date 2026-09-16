@@ -52,7 +52,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Reject committed cloud credentials
         run: bash scripts/verify-no-committed-secrets.sh
