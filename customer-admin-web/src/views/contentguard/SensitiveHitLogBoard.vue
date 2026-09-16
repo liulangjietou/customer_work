@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, reactive, ref, shallowRef, watch } from 'vue'
 import ContentGuardTrendChart from '@/components/ContentGuardTrendChart.vue'
+import CrudLoadState from '@/components/CrudLoadState.vue'
+import { useQueryState } from '@/composables/useQueryState'
+import { useAuthStore } from '@/store/auth'
 import { fetchHitLogStats, pageHitLogs } from '@/api/contentGuard'
 import { summarizeSensitiveHitWords } from '@/utils/sensitiveHitWords'
 import type {
@@ -10,11 +13,7 @@ import type {
   SensitiveWordHitStatsVO,
 } from '@/types/api'
 
-const loading = ref(false)
-const statsLoading = ref(false)
-const list = ref<SensitiveWordHitLogVO[]>([])
-const total = ref(0)
-const stats = ref<SensitiveWordHitStatsVO | null>(null)
+const auth = useAuthStore()
 /** 时间区间由 el-date-picker 双向绑定，提交前拆成 startMs/endMs 两个查询参数。 */
 const timeRange = ref<[Date, Date] | null>(null)
 
@@ -57,37 +56,36 @@ function buildQuery(): SensitiveWordHitLogPageQuery {
   }
 }
 
-async function loadList() {
-  loading.value = true
-  try {
-    const result = await pageHitLogs(buildQuery())
-    list.value = result.list
-    total.value = result.total
-  } finally {
-    loading.value = false
-  }
-}
-
-async function loadStats() {
-  statsLoading.value = true
-  try {
-    stats.value = await fetchHitLogStats(buildQuery())
-  } finally {
-    statsLoading.value = false
-  }
-}
+const submittedQuery = shallowRef(buildQuery())
+const { data: snapshot, loading, error: loadError, load: loadList } = useQueryState<{
+  list: SensitiveWordHitLogVO[]; total: number; stats: SensitiveWordHitStatsVO
+} | null>(async () => {
+  const params = { ...submittedQuery.value, pageNum: query.pageNum, pageSize: query.pageSize }
+  const [page, stats] = await Promise.all([pageHitLogs(params), fetchHitLogStats(params)])
+  return { list: page.list, total: page.total, stats }
+}, () => null)
+const list = computed(() => snapshot.value?.list ?? [])
+const total = computed(() => snapshot.value?.total ?? 0)
+const stats = computed(() => snapshot.value?.stats ?? null)
+const statsLoading = loading
 
 /** 搜索时列表与统计一起刷新——两者共用同一套条件，分开刷会出现"图表和表格对不上"。 */
 async function handleSearch() {
   query.pageNum = 1
-  await Promise.all([loadList(), loadStats()])
+  submittedQuery.value = buildQuery()
+  await loadList()
 }
 
-onMounted(handleSearch)
+watch([() => auth.loginGeneration, () => auth.token, () => auth.permissions.join('\0')], () => {
+  timeRange.value = null
+  Object.assign(query, { pageNum: 1, pageSize: 10, keyword: '', direction: '', action: '', sessionId: '' })
+  if (auth.isLoggedIn && auth.isApproved && auth.hasPermission('sensitive-hit-log:view')) void handleSearch()
+}, { immediate: true })
 </script>
 
 <template>
   <div class="page">
+    <CrudLoadState :error="loadError" :has-stale-data="!!snapshot" :loading="loading" @retry="loadList" />
     <el-alert type="info" :closable="false" show-icon class="notice">
       数据来自客服端库的命中流水，仅当客服端开启
       <code>customer-work.sensitive-word.hit-log.enabled=true</code> 且 <code>store-mode=jdbc</code> 时才有记录。
@@ -119,7 +117,7 @@ onMounted(handleSearch)
       </div>
     </el-card>
 
-    <div class="stat-row" aria-label="敏感词命中指标">
+    <div v-if="snapshot" class="stat-row" aria-label="敏感词命中指标">
       <div v-loading="statsLoading" class="stat-card">
         <div class="stat-label">命中总数</div>
         <div class="stat-value">{{ stats?.total ?? 0 }}</div>
@@ -138,7 +136,7 @@ onMounted(handleSearch)
       </div>
     </div>
 
-    <div class="chart-row">
+    <div v-if="snapshot" class="chart-row">
       <el-card class="trend-card" shadow="never">
         <div class="section-heading">
           <div>
@@ -171,7 +169,7 @@ onMounted(handleSearch)
       </el-card>
     </div>
 
-    <el-card class="detail-card" shadow="never">
+    <el-card v-if="snapshot" class="detail-card" shadow="never">
       <div class="section-heading detail-heading">
         <div>
           <span class="section-eyebrow">RAW EVIDENCE</span>

@@ -1,6 +1,9 @@
 import { expect, test } from './fixtures/adminTestFixture'
 
 test('知识试评按离线评测展示和筛选，不进入不存在的工作区会话', async ({ page }) => {
+  await page.route('**/api/auth/permissions', route => route.fulfill({
+    json: { code: 0, data: ['agent-call-stats:view'] },
+  }))
   const queries: URL[] = []
   await page.route('**/api/agent-call-stats/page?**', (route) => {
     queries.push(new URL(route.request().url()))
