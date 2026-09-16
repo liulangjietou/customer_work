@@ -97,6 +97,9 @@ customer-work:
   # （真并发 fanout + 路由 + reduce 归纳，已有确定性单测覆盖），不依赖框架原生 subagent。
   # ------------------------------------------------------------------
   harness:
+    # 与 Java 默认值相同，仍显式声明：客服主链路（chat/chatStream/WS）据此升级为 HarnessAgent
+    # 以获得下方 context.compression-enabled 的长会话保护，回退可直接把本项改 false 而不用重新发版。
+    enabled: true
     # 本段多项与 Java 默认值相同，同样是刻意显式声明的生产安全基线（理由同上）。
     subagent:
       enabled: false
@@ -122,6 +125,11 @@ customer-work:
     max-token: ${CONTEXT_MAX_TOKEN:8000}
     msg-threshold: ${CONTEXT_MSG_THRESHOLD:40}
     last-keep: ${CONTEXT_LAST_KEEP:10}
+    # 确定性预算裁剪：零模型成本，作为 Compaction 静默降级（模型摘要失败时透传原文）时的最后一道防线，
+    # 与 Compaction 并存不冲突。与 Java 默认值相同，仍显式声明为生产安全基线。
+    budget-enabled: true
+    budget-max-messages: 60
+    budget-keep-earliest: 4
 
   # ------------------------------------------------------------------
   # SSE 流式空闲超时：缓解 #1741（SSE 流长时间无数据无法自行关闭，连接泄漏）

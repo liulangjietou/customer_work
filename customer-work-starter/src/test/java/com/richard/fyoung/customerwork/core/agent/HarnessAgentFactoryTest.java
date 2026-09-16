@@ -17,6 +17,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -65,7 +66,9 @@ class HarnessAgentFactoryTest {
         assertNotNull(agent.getStateStore(), "应挂载 StateStore");
         assertFalse(agent.getDelegate().getMiddlewares().stream()
             .anyMatch(middleware -> middleware.getClass().getSimpleName().contains("Memory")));
-        assertFalse(agent.getDelegate().getMiddlewares().stream()
+        // compressionEnabled 默认开启（长任务无压缩保护的唯一后果是长会话最终报模型上下文超限），
+        // 与其余能力（memory/subagent/plan mode 等，仍默认关闭）不同，这里默认应挂载 Compaction 中间件
+        assertTrue(agent.getDelegate().getMiddlewares().stream()
             .anyMatch(middleware -> middleware.getClass().getSimpleName().contains("Compaction")));
         assertFalse(agent.getDelegate().getMiddlewares().stream()
             .anyMatch(middleware -> middleware.getClass().getSimpleName().contains("ToolResultEviction")));
@@ -75,6 +78,19 @@ class HarnessAgentFactoryTest {
             || "wait_async_results".equals(name)));
         assertFalse(toolNames.stream().anyMatch(name -> Set.of("list_files", "read_file", "write_file", "edit_file",
             "grep_files", "glob_files", "execute").contains(name)));
+    }
+
+    @Test
+    void createHarnessAgent_shouldNotWrapCompaction_whenExplicitlyDisabled() {
+        // compressionEnabled 默认已开启（见 _withDefaults），这里覆盖运维显式关闭的场景
+        CustomerWorkProperties props = new CustomerWorkProperties();
+        props.getHarness().setWorkspaceDir("target/test-workspace");
+        props.getContext().setCompressionEnabled(false);
+
+        HarnessAgent agent = factory(props).createHarnessAgent("conv-no-compaction");
+
+        assertFalse(agent.getDelegate().getMiddlewares().stream()
+            .anyMatch(middleware -> middleware.getClass().getSimpleName().contains("Compaction")));
     }
 
     @Test
