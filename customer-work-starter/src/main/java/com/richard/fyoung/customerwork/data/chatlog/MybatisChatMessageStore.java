@@ -5,6 +5,7 @@ import com.richard.fyoung.customerwork.data.chatlog.mapper.ChatMessageMapper;
 import com.richard.fyoung.customerwork.data.ticket.TicketActorType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessResourceFailureException;
 
 import java.util.Collections;
 import java.util.List;
@@ -49,7 +50,7 @@ public class MybatisChatMessageStore implements ChatMessageStore {
         } catch (Exception e) {
             log.error("chat message query failed, code={}, dim={}, value={}",
                 "CHATLOG-FINDBYMESSAGE-FAIL", "message_id", messageId, e);
-            throw new IllegalStateException("failed to find chat message: " + messageId, e);
+            throw new DataAccessResourceFailureException("failed to find chat message: " + messageId, e);
         }
     }
 
@@ -61,7 +62,7 @@ public class MybatisChatMessageStore implements ChatMessageStore {
         } catch (Exception e) {
             log.error("chat message query failed, code={}, dim={}, value={}",
                 "CHATLOG-FINDBYSESSION-FAIL", "session_id", sessionId, e);
-            return List.of();
+            throw new DataAccessResourceFailureException("failed to read session messages", e);
         }
     }
 
@@ -73,7 +74,7 @@ public class MybatisChatMessageStore implements ChatMessageStore {
         } catch (Exception e) {
             log.error("chat message query failed, code={}, dim={}, value={}",
                 "CHATLOG-FINDBYTICKET-FAIL", "ticket_id", ticketId, e);
-            return List.of();
+            throw new DataAccessResourceFailureException("failed to read ticket messages", e);
         }
     }
 

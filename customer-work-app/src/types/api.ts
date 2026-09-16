@@ -204,6 +204,10 @@ export interface ChatMessage {
   senderId: string | null
   content: string
   createdAtMs: number
+  /** 本地受理状态独立于 AI 回复和业务结果，刷新后以服务端历史为准。 */
+  clientMsgId?: string
+  deliveryStatus?: 'SENDING' | 'ACCEPTED' | 'REJECTED' | 'UNKNOWN'
+  deliveryError?: string
   /**
    * 本条回复引用的知识来源。
    *
@@ -255,6 +259,7 @@ export interface WsPingFrame {
 
 /** 服务端 -> 用户：聊天消息（客服/系统/机器人非流式） */
 export interface WsChatMessage {
+  id?: number
   messageId: string
   ticketId: string
   senderType: SenderType
@@ -266,6 +271,9 @@ export interface WsChatMessage {
 /** 服务端 -> 用户：机器人流式增量 */
 export interface WsChatChunk {
   content: string
+  sessionId?: string
+  ticketId?: string
+  clientMsgId?: string
 }
 
 /**
@@ -312,6 +320,8 @@ export interface ChatTerminalEnvelope {
 
 /** 服务端 -> 用户：流式完成，含已落库全文与会话归属。 */
 export interface WsChatDone extends ChatTerminalEnvelope {
+  id?: number
+  clientMsgId?: string
   sessionId: string
   ticketId: string | null
   content: string
@@ -344,6 +354,19 @@ export interface WsSystemMessage {
 export interface WsErrorMessage {
   code: string
   message: string
+  sessionId?: string
+  clientMsgId?: string
+  acceptance?: 'ACCEPTED' | 'REJECTED' | 'UNKNOWN'
+}
+
+/** 服务端保存输入之后的独立回执。 */
+export interface WsChatAccepted {
+  clientMsgId: string
+  id: number
+  messageId: string
+  sessionId: string
+  ticketId: string
+  ts: number
 }
 
 /**

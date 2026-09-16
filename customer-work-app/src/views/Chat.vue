@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { showConfirmDialog, showToast } from 'vant'
 import type { UploaderAfterRead, UploaderBeforeRead, UploaderFileListItem } from 'vant'
 import CsatSurveyCard from '@/components/CsatSurveyCard.vue'
+import { useMessageDelivery } from '@/composables/useMessageDelivery'
 import {
   closeTicket,
   createSession,
@@ -56,13 +57,26 @@ const wsConnected = ref(false)
 const wsReconnecting = ref(false)
 const initializing = ref(true)
 const initializationError = ref('')
+let disposed = false
+const synchronizationError = ref('')
+const delivery = useMessageDelivery({ sessionId, ticketId, messages,
+  userId: () => auth.userId, identity: () => auth.token ?? '',
+})
+const DELIVERY_LABELS = { SENDING: '发送中', ACCEPTED: '已受理', REJECTED: '未受理', UNKNOWN: '受理状态未知' }
 
 // 机器人流式回复：chat_chunk 增量拼接到这里做打字机效果，chat_done 定稿后清空并落入 messages
 const streamingContent = ref('')
 const streamingActive = computed(() => streamingContent.value.length > 0)
+const interruptedReplies = ref<Array<{ id: number; label: string; content: string; clientMsgId: string | null }>>([])
+const streamingClientMessageId = ref<string | null>(null)
+let interruptedReplySequence = 0
+const HISTORY_PAGE_SIZE = 50
+const hasOlderMessages = ref(false)
+const historyLoading = ref(false)
+const historyError = ref('')
+let historyRequestVersion = 0
 /**
- * chat_chunk 没有会话归属，仍用本地记录的“最近发起流式请求 sessionId”过滤；chat_done 已携带
- * 服务端持久化消息的 sessionId/ticketId，优先按权威归属校验并兼容旧服务端帧。
+ * 优先按服务端会话和请求归属校验，旧服务端增量则仅能沿用当前发起会话过滤。
  */
 const streamingSessionId = ref<string | null>(null)
 
@@ -139,8 +153,10 @@ const canSend = computed(
   () =>
     wsConnected.value &&
     !!sessionId.value &&
-    inputContent.value.trim().length > 0 &&
-    !attachmentBlocked.value,
+    (inputContent.value.trim().length > 0 || attachments.value.some(item => item.status === 'success')) &&
+    !attachmentBlocked.value &&
+    !ended.value &&
+    !delivery.isPending(buildMessageWithAttachments(inputContent.value)),
 )
 const canHandoff = computed(() => {
   const status = ticket.value?.status
@@ -188,10 +204,55 @@ async function scrollToBottom() {
 }
 
 async function loadHistory() {
-  const list = await fetchMessages(sessionId.value, { limit: 50 })
-  messages.value = list
+  if (disposed) return
+  const targetSession = sessionId.value
+  const identity = auth.token
+  const requestVersion = ++historyRequestVersion
+  const latestKnownId = messages.value.reduce((latest, message) => Math.max(latest, message.id), 0)
+  let page = await fetchMessages(targetSession, { limit: HISTORY_PAGE_SIZE })
+  const collected = [...page]
+  let oldestId = Math.min(...page.map(message => message.id))
+  // 重连先补到已知消息的边界，再一次性合并；中途失败保留当前已展示的记录。
+  while (latestKnownId > 0 && page.length === HISTORY_PAGE_SIZE && oldestId > latestKnownId) {
+    if (disposed || targetSession !== sessionId.value || identity !== auth.token || requestVersion !== historyRequestVersion) return
+    page = await fetchMessages(targetSession, { beforeId: oldestId, limit: HISTORY_PAGE_SIZE })
+    const nextOldest = Math.min(...page.map(message => message.id))
+    if (page.length > 0 && (nextOldest <= 0 || nextOldest >= oldestId)) throw new Error('History cursor did not advance')
+    collected.push(...page)
+    oldestId = nextOldest
+  }
+  if (disposed || targetSession !== sessionId.value || identity !== auth.token || requestVersion !== historyRequestVersion) return
+  if (latestKnownId === 0 || page.length < HISTORY_PAGE_SIZE) hasOlderMessages.value = page.length === HISTORY_PAGE_SIZE
+  messages.value = delivery.mergeHistory(collected)
   await loadFeedback()
   await scrollToBottom()
+}
+
+/** 主动查看更早记录；保留滚动锚点，失败可原地重试。 */
+async function loadOlderMessages() {
+  if (historyLoading.value) return
+  const ids = messages.value.map(message => message.id).filter(id => id > 0)
+  if (ids.length === 0) return
+  const targetSession = sessionId.value
+  const identity = auth.token
+  const beforeId = Math.min(...ids)
+  historyLoading.value = true
+  historyError.value = ''
+  const oldHeight = scrollBox.value?.scrollHeight ?? 0
+  const oldTop = scrollBox.value?.scrollTop ?? 0
+  try {
+    const page = await fetchMessages(targetSession, { beforeId, limit: HISTORY_PAGE_SIZE })
+    if (targetSession !== sessionId.value || identity !== auth.token) return
+    if (page.some(message => message.id <= 0 || message.id >= beforeId)) throw new Error('Invalid older history cursor')
+    messages.value = delivery.mergeHistory(page)
+    hasOlderMessages.value = page.length === HISTORY_PAGE_SIZE
+    await nextTick()
+    if (scrollBox.value) scrollBox.value.scrollTop = oldTop + scrollBox.value.scrollHeight - oldHeight
+  } catch {
+    if (targetSession === sessionId.value && identity === auth.token) historyError.value = '更早的记录未加载成功，请重试。'
+  } finally {
+    historyLoading.value = false
+  }
 }
 
 /** 按当前会话拉取已有反馈做回显；反馈是辅助信息，拉取失败不打断历史加载、不弹错误提示。 */
@@ -232,7 +293,9 @@ async function refreshTicket() {
   if (!ticketId.value) {
     return
   }
-  const detail = await fetchTicketDetail(ticketId.value)
+  const targetTicket = ticketId.value
+  const detail = await fetchTicketDetail(targetTicket)
+  if (targetTicket !== ticketId.value) return
   ticket.value = detail.ticket
 }
 
@@ -245,11 +308,18 @@ function cacheSession(newSessionId: string, newTicketId: string) {
 function resetStreamingState() {
   streamingContent.value = ''
   streamingSessionId.value = null
+  interruptedReplies.value = []
+  streamingClientMessageId.value = null
+  hasOlderMessages.value = false
+  historyError.value = ''
+  historyRequestVersion++
   attachments.value = []
 }
 
 async function openNewSession() {
+  const identity = auth.token
   const result = await createSession()
+  if (disposed || identity !== auth.token) return
   resetStreamingState()
   sessionId.value = result.sessionId
   ticketId.value = result.ticketId
@@ -261,7 +331,9 @@ async function openNewSession() {
 
 /** 从消息列表点进某条会话：按 ticketId 精确加载，不依赖/不受本地缓存的"当前会话"影响。 */
 async function loadTicketFromRoute(id: string) {
+  const identity = auth.token
   const detail = await fetchTicketDetail(id)
+  if (disposed || identity !== auth.token) return
   resetStreamingState()
   ticket.value = detail.ticket
   ticketId.value = detail.ticket.id
@@ -307,6 +379,7 @@ function connectWs() {
   chatSocket.on('close', onWsClose)
   chatSocket.on('reconnecting', onWsReconnecting)
   chatSocket.on('chat', onWsChat)
+  chatSocket.on('chat_accepted', delivery.accept)
   chatSocket.on('chat_chunk', onWsChatChunk)
   chatSocket.on('chat_done', onWsChatDone)
   chatSocket.on('ticket_event', onWsTicketEvent)
@@ -320,6 +393,7 @@ function disconnectWs() {
   chatSocket.off('close', onWsClose)
   chatSocket.off('reconnecting', onWsReconnecting)
   chatSocket.off('chat', onWsChat)
+  chatSocket.off('chat_accepted', delivery.accept)
   chatSocket.off('chat_chunk', onWsChatChunk)
   chatSocket.off('chat_done', onWsChatDone)
   chatSocket.off('ticket_event', onWsTicketEvent)
@@ -335,38 +409,43 @@ function disconnectWs() {
  * 它们在服务端只留了一行日志。数据本身都已落库，所以重连后重新拉一次历史就能补齐；
  * 不拉的话用户会一直以为坐席没回，而实际上回复早就在库里了，刷新页面就能看到。</p>
  *
- * <p>只在<b>重连</b>时拉：首次连接前 onMounted 已经拉过一次，再拉一次纯属浪费。</p>
+ * <p>首次订阅也需补拉，覆盖首次 HTTP 快照与 WS 连接建立之间的空隙。</p>
  */
-async function onWsOpen(data: unknown) {
+async function onWsOpen() {
   wsConnected.value = true
   wsReconnecting.value = false
-  if (!(data as { reconnected?: boolean } | null)?.reconnected) {
-    return
-  }
-  // 断线时正在流式的那次回复已经收不全了，先清掉半截内容再补历史，
-  // 否则残留片段会和拉回来的正文重复显示
-  streamingContent.value = ''
-  streamingSessionId.value = null
-  try {
-    await loadHistory()
-  } catch {
-    // 补拉失败不打断会话：用户仍可继续发消息，重进页面同样能拿到历史
+  if (!sessionId.value || initializationError.value) return
+  await synchronizeConversation()
+}
+
+async function synchronizeConversation() {
+  const targetSession = sessionId.value
+  synchronizationError.value = ''
+  await delivery.reconcile()
+  const results = await Promise.allSettled([loadHistory(), refreshTicket()])
+  if (targetSession === sessionId.value && results.some(result => result.status === 'rejected')) {
+    synchronizationError.value = '部分会话记录或工单状态尚未同步，请重试核对。'
   }
 }
 
 function onWsClose() {
   wsConnected.value = false
+  delivery.disconnected()
+  archiveInterruptedReply('断线前收到的回复片段')
+}
+
+function archiveInterruptedReply(label: string) {
+  if (streamingContent.value) {
+    interruptedReplies.value.push({ id: ++interruptedReplySequence, label, content: streamingContent.value,
+      clientMsgId: streamingClientMessageId.value })
+    streamingContent.value = ''
+  }
+  streamingSessionId.value = null
+  streamingClientMessageId.value = null
 }
 
 function onWsReconnecting() {
   wsReconnecting.value = true
-}
-
-/** 每条消息一个标识，供服务端去重——重连后客户端重发时沿用同一个值。 */
-function newClientMsgId(): string {
-  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
 /**
@@ -379,8 +458,8 @@ function onWsChat(data: unknown) {
   if (payload.ticketId !== ticketId.value) {
     return
   }
-  messages.value.push({
-    id: Date.now(),
+  upsertIncomingMessage({
+    id: payload.id ?? 0,
     messageId: payload.messageId,
     sessionId: sessionId.value,
     ticketId: payload.ticketId,
@@ -392,10 +471,19 @@ function onWsChat(data: unknown) {
   scrollToBottom()
 }
 
+/** HTTP 快照和 WS 可能覆盖同一消息；只能按持久化消息号合并，时间戳不能充当数据库游标。 */
+function upsertIncomingMessage(message: ChatMessage) {
+  const existing = messages.value.find(item => item.messageId === message.messageId)
+  if (existing) Object.assign(existing, message, { id: message.id || existing.id })
+  else messages.value.push(message)
+}
+
 function onWsChatChunk(data: unknown) {
   const payload = data as WsChatChunk
-  // chat_chunk 帧不带 sessionId/ticketId，改用本地记录的"发起流式请求时的会话"做归属匹配
-  if (streamingSessionId.value !== sessionId.value) {
+  if (streamingSessionId.value !== sessionId.value
+    || (payload.sessionId && payload.sessionId !== sessionId.value)
+    || (payload.ticketId && payload.ticketId !== ticketId.value)
+    || (payload.clientMsgId && payload.clientMsgId !== streamingClientMessageId.value)) {
     return
   }
   streamingContent.value += payload.content
@@ -411,8 +499,8 @@ function onWsChatDone(data: unknown) {
   ) {
     return
   }
-  messages.value.push({
-    id: Date.now(),
+  upsertIncomingMessage({
+    id: payload.id ?? 0,
     messageId: payload.messageId,
     sessionId: sessionId.value,
     ticketId: ticketId.value ?? '',
@@ -423,8 +511,12 @@ function onWsChatDone(data: unknown) {
     citations: payload.citations ?? [],
     taskPlan: payload.taskPlan ?? [],
   })
-  streamingContent.value = ''
-  streamingSessionId.value = null
+  if (!payload.clientMsgId || payload.clientMsgId === streamingClientMessageId.value) {
+    streamingContent.value = ''
+    streamingSessionId.value = null
+    streamingClientMessageId.value = null
+  }
+  if (payload.clientMsgId) interruptedReplies.value = interruptedReplies.value.filter(reply => reply.clientMsgId !== payload.clientMsgId)
   scrollToBottom()
   // 回复定稿后才刷额度：token 记在模型调用之后，回复过程中查到的还是上一轮的数
   refreshQuota()
@@ -480,7 +572,15 @@ function onWsSystem(data: unknown) {
 
 function onWsError(data: unknown) {
   const payload = data as WsErrorMessage
-  showToast(payload.message || '连接出现异常')
+  if (payload.sessionId && payload.sessionId !== sessionId.value) return
+  const replyInterrupted = payload.acceptance === 'ACCEPTED' && payload.clientMsgId
+    && payload.clientMsgId === streamingClientMessageId.value
+  if (replyInterrupted) {
+    archiveInterruptedReply('出错前收到的回复片段')
+    synchronizationError.value = '回复尚未完成，请同步核对已保存的会话记录。'
+  }
+  if (delivery.handleError(payload)) return
+  if (!replyInterrupted) showToast(payload.message || '连接出现异常')
 }
 
 /** 前端先拦超限文件，与后端 max-file-size-mb 对齐，减少无谓上传请求；van-uploader 超限时不会触发 afterRead。 */
@@ -573,28 +673,20 @@ function sendMessage() {
   if (!canSend.value) {
     return
   }
-  const text = inputContent.value.trim()
+  const draft = inputContent.value
+  const text = draft
   const messageToSend = buildMessageWithAttachments(text)
-  const attachedNames = attachments.value.filter((a) => a.status === 'success').map((a) => a.name)
-  messages.value.push({
-    id: Date.now(),
-    messageId: `local-${Date.now()}`,
-    sessionId: sessionId.value,
-    ticketId: ticketId.value ?? '',
-    senderType: 'USER',
-    senderId: auth.userId,
-    // 用户气泡只展示原始输入 + 附件文件名提示，不把拼进正文的附件全文也显示出来（那部分只是发给模型看的）。
-    content: attachedNames.length > 0 ? `${text}\n📎 ${attachedNames.join('、')}` : text,
-    createdAtMs: Date.now(),
+  const sentAttachments = [...attachments.value]
+  const attachedNames = sentAttachments.filter((a) => a.status === 'success').map((a) => a.name)
+  const displayContent = attachedNames.length > 0 ? `${draft}\n📎 ${attachedNames.join('、')}` : draft
+  const sent = delivery.submit(messageToSend, displayContent, () => {
+    if (inputContent.value === draft) inputContent.value = ''
+    attachments.value = attachments.value.filter(item => !sentAttachments.includes(item))
   })
+  if (!sent) return
   // 标记本次流式回复归属的会话，供 onWsChatChunk/onWsChatDone 比对，见 streamingSessionId 定义处注释
   streamingSessionId.value = sessionId.value
-  chatSocket.send({
-    type: 'chat',
-    data: { sessionId: sessionId.value, content: messageToSend, clientMsgId: newClientMsgId() },
-  })
-  inputContent.value = ''
-  attachments.value = []
+  streamingClientMessageId.value = sent
   scrollToBottom()
 }
 
@@ -740,7 +832,9 @@ async function initializeChat() {
 }
 
 onMounted(async () => {
+  const identity = auth.token
   await initializeChat()
+  if (disposed || identity !== auth.token) return
   // 带 orderId 进入（订单详情跳转）：预填咨询文案，仅预填不自动发送
   const orderId = route.query.orderId
   if (typeof orderId === 'string' && orderId) {
@@ -752,6 +846,8 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  disposed = true
+  historyRequestVersion++
   disconnectWs()
 })
 </script>
@@ -802,6 +898,10 @@ onUnmounted(() => {
       <van-loading size="13" />
       连接已断开，正在重连…
     </div>
+    <div v-if="synchronizationError" class="synchronization-error" role="alert">
+      <span>{{ synchronizationError }}</span>
+      <button type="button" @click="synchronizeConversation">重新同步</button>
+    </div>
 
     <div ref="scrollBox" class="message-area">
       <div v-if="initializing" class="state-panel" role="status">
@@ -814,6 +914,12 @@ onUnmounted(() => {
         <van-button round type="primary" size="small" @click="initializeChat">重新加载</van-button>
       </div>
       <template v-else>
+        <div v-if="hasOlderMessages || historyError" class="history-control">
+          <button type="button" :disabled="historyLoading" @click="loadOlderMessages">
+            {{ historyLoading ? '正在加载…' : '加载更早消息' }}
+          </button>
+          <span v-if="historyError" role="alert">{{ historyError }}</span>
+        </div>
         <div v-if="messages.length === 0" class="welcome-card">
           <div class="welcome-mark">AI</div>
           <div>
@@ -847,6 +953,14 @@ onUnmounted(() => {
                 }}
               </div>
               <div class="bubble">{{ message.content }}</div>
+              <div v-if="message.deliveryStatus" class="delivery-state" :class="`delivery-${message.deliveryStatus}`" role="status">
+                <span>{{ DELIVERY_LABELS[message.deliveryStatus] }}</span>
+                <span v-if="message.deliveryError" class="delivery-error">{{ message.deliveryError }}</span>
+                <button v-if="message.deliveryStatus === 'UNKNOWN' || message.deliveryStatus === 'REJECTED'"
+                  type="button" :disabled="!wsConnected || ended" @click="delivery.retry(message)">
+                  {{ message.deliveryStatus === 'UNKNOWN' ? '核对并重试' : '重试发送' }}
+                </button>
+              </div>
               <div
                 v-if="message.senderType === 'BOT' && message.taskPlan?.length"
                 class="task-plan"
@@ -914,6 +1028,11 @@ onUnmounted(() => {
             </div>
           </template>
         </div>
+        <details v-for="reply in interruptedReplies" :key="reply.id" class="interrupted-reply">
+          <summary>{{ reply.label }}</summary>
+          <p>内容可能不完整，完整记录以同步后的消息为准。</p>
+          <div class="interrupted-content">{{ reply.content }}</div>
+        </details>
         <div v-if="streamingActive" class="message-row row-BOT">
           <div class="sender-avatar" aria-hidden="true">AI</div>
           <div class="bubble-wrap">
@@ -1039,6 +1158,54 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.history-control { display: grid; justify-items: center; gap: 6px; margin-bottom: 16px; color: #925e13; font-size: 13px; }
+.history-control button { min-height: 44px; padding: 0 16px; border: 0; border-radius: 12px; background: #edf3ff; color: #235fc7; cursor: pointer; }
+.interrupted-reply { margin: 12px 0; padding: 0 14px 10px; border: 1px solid #e4d4aa; border-radius: 12px; background: #fffcf4; font-size: 13px; color: #70551e; }
+.interrupted-reply summary { min-height: 44px; align-content: center; cursor: pointer; }
+.interrupted-reply p { margin: 0 0 10px; line-height: 1.6; }
+.interrupted-content { white-space: pre-wrap; overflow-wrap: anywhere; color: #374151; }
+.history-control button:focus-visible, .interrupted-reply summary:focus-visible { outline: 2px solid #235fc7; outline-offset: 3px; }
+.delivery-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px 10px;
+  margin-top: 6px;
+  color: var(--cw-text-secondary, #5d6d83);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.delivery-ACCEPTED { color: #267765; }
+.delivery-UNKNOWN,
+.delivery-REJECTED { color: #925e13; }
+.delivery-error { flex-basis: 100%; overflow-wrap: anywhere; }
+.delivery-state button,
+.synchronization-error button {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--cw-line);
+  border-radius: 8px;
+  background: var(--cw-card-bg, #fff);
+  color: var(--cw-primary, #3658cb);
+  font: inherit;
+  cursor: pointer;
+}
+.delivery-state button:disabled { opacity: .5; cursor: default; }
+.delivery-state button:focus-visible,
+.synchronization-error button:focus-visible { outline: 2px solid var(--cw-primary, #3658cb); outline-offset: 2px; }
+.synchronization-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  color: #925e13;
+  background: #fff8e9;
+  font-size: 13px;
+}
+.synchronization-error span { flex: 1; }
+.synchronization-error button { flex-shrink: 0; }
+
 .composer-label {
   position: absolute;
   width: 1px;

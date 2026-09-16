@@ -4,9 +4,11 @@ import { defineComponent, h } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChatMessage, FeedbackType, TicketDetail, UserQuota } from '@/types/api'
 import ChatView from './Chat.vue'
+import { chatSocket } from '@/utils/ws'
 
 const {
   fetchMessagesMock,
+  fetchReceiptMock,
   fetchMyQuotaMock,
   fetchSessionFeedbackMock,
   fetchTicketDetailMock,
@@ -16,6 +18,7 @@ const {
   wsHandlers,
 } = vi.hoisted(() => ({
   fetchMessagesMock: vi.fn(),
+  fetchReceiptMock: vi.fn(),
   fetchMyQuotaMock: vi.fn(),
   fetchSessionFeedbackMock: vi.fn(),
   fetchTicketDetailMock: vi.fn(),
@@ -30,6 +33,7 @@ vi.mock('@/api/ticket', () => ({
   confirmTicket: vi.fn(),
   createSession: vi.fn(),
   fetchMessages: fetchMessagesMock,
+  fetchMessageReceipt: fetchReceiptMock,
   fetchTicketDetail: fetchTicketDetailMock,
   handoffTicket: vi.fn(),
   rejectTicket: vi.fn(),
@@ -208,7 +212,8 @@ describe('Chat', () => {
     fetchMyQuotaMock.mockReset().mockResolvedValue(unlimitedQuota)
     fetchSessionFeedbackMock.mockReset().mockResolvedValue([])
     fetchTicketDetailMock.mockReset().mockResolvedValue(detail)
-    sendMock.mockReset()
+    sendMock.mockReset().mockReturnValue(true)
+    fetchReceiptMock.mockReset().mockResolvedValue({ message: null })
     submitFeedbackMock
       .mockReset()
       .mockImplementation(({ type }: { type: FeedbackType }) =>
@@ -234,6 +239,193 @@ describe('Chat', () => {
     wrapper.unmount()
   })
 
+  it('连接在点击发送时失效，保留原草稿且不伪造已发送消息', async () => {
+    sendMock.mockReturnValue(false)
+    const wrapper = await mountReadyChat()
+    const input = wrapper.get('.message-input')
+    await input.setValue('  请保留我的草稿  ')
+    await wrapper.get('.send-button').trigger('click')
+    await flushPromises()
+    expect((input.element as HTMLInputElement).value).toBe('  请保留我的草稿  ')
+    expect(wrapper.findAll('.row-USER')).toHaveLength(0)
+    wrapper.unmount()
+  })
+
+  it('只有已解析附件也可以发送，回执到达后才移除附件', async () => {
+    uploadAttachmentMock.mockResolvedValueOnce({ id: 'attachment-1', parseStatus: 'SUCCESS', content: '发票正文' })
+    const wrapper = await mountReadyChat()
+    await wrapper.findComponent(UploaderStub).props('afterRead')!({ file: new File(['content'], 'invoice.txt') })
+    await flushPromises()
+    expect(wrapper.get('.send-button').attributes('disabled')).toBeUndefined()
+    await wrapper.get('.send-button').trigger('click')
+    expect(sendMock).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('.attachment-chips').text()).toContain('invoice.txt')
+    const command = sendMock.mock.calls[0][0].data
+    wsHandlers.get('chat_accepted')?.({ clientMsgId: command.clientMsgId, id: 2, messageId: 'saved-attachment',
+      sessionId: 'session-1', ticketId: 'ticket-1', ts: Date.now() })
+    await flushPromises()
+    expect(wrapper.find('.attachment-chips').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('重连补拉失败时保留收到的回复片段并明确标为中断', async () => {
+    const wrapper = await mountReadyChat()
+    await wrapper.get('.message-input').setValue('请帮我查物流')
+    await wrapper.get('.send-button').trigger('click')
+    wsHandlers.get('chat_chunk')?.({ content: '已查询到订单，正在' })
+    wsHandlers.get('close')?.(null)
+    fetchMessagesMock.mockRejectedValueOnce(new Error('offline history'))
+    wsHandlers.get('open')?.({ reconnected: true })
+    await flushPromises()
+    expect(wrapper.text()).toContain('已查询到订单，正在')
+    expect(wrapper.text()).toContain('断线前收到的回复片段')
+    expect(wrapper.text()).toContain('重新同步')
+    wrapper.unmount()
+  })
+
+  it('其他会话的流式片段不会拼接到当前正在接收的回复', async () => {
+    const wrapper = await mountReadyChat()
+    await wrapper.get('.message-input').setValue('当前会话的问题')
+    await wrapper.get('.send-button').trigger('click')
+    wsHandlers.get('chat_chunk')?.({ sessionId: 'other-session', ticketId: 'other-ticket', content: '不应显示的片段' })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('不应显示的片段')
+    wrapper.unmount()
+  })
+
+  it('受理后的回复失败停止光标并保留片段，只提供查询核对', async () => {
+    const wrapper = await mountReadyChat()
+    await wrapper.get('.message-input').setValue('请继续核对')
+    await wrapper.get('.send-button').trigger('click')
+    const command = sendMock.mock.calls[0][0].data
+    wsHandlers.get('chat_accepted')?.({ clientMsgId: command.clientMsgId, id: 2, messageId: 'saved-input',
+      sessionId: 'session-1', ticketId: 'ticket-1', ts: Date.now() })
+    wsHandlers.get('chat_chunk')?.({ sessionId: 'session-1', clientMsgId: command.clientMsgId, content: '已经开始核对' })
+    wsHandlers.get('error')?.({ sessionId: 'session-1', clientMsgId: command.clientMsgId,
+      code: 'CHAT-AI-STREAM-FAIL', acceptance: 'ACCEPTED', message: '回复尚未完成' })
+    await flushPromises()
+    expect(wrapper.find('.cursor').exists()).toBe(false)
+    expect(wrapper.text()).toContain('已经开始核对')
+    expect(wrapper.text()).toContain('出错前收到的回复片段')
+    expect(sendMock).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('重连消息超过一页时补齐中间记录并保留已显示的旧记录', async () => {
+    const wrapper = await mountReadyChat()
+    const message = (id: number): ChatMessage => ({ ...botMessage, id, messageId: `gap-${id}`,
+      content: `第 ${id} 条回复`, createdAtMs: botMessage.createdAtMs + id })
+    fetchMessagesMock.mockResolvedValueOnce(Array.from({ length: 50 }, (_, index) => message(index + 52)))
+      .mockResolvedValueOnce(Array.from({ length: 50 }, (_, index) => message(index + 2)))
+      .mockResolvedValueOnce([botMessage])
+    wsHandlers.get('open')?.({ reconnected: true })
+    await flushPromises()
+    expect(fetchMessagesMock).toHaveBeenCalledWith('session-1', { beforeId: 52, limit: 50 })
+    expect(wrapper.text()).toContain('第 2 条回复')
+    expect(wrapper.text()).toContain(botMessage.content)
+    expect(wrapper.findAll('.row-BOT')).toHaveLength(101)
+    wrapper.unmount()
+  })
+
+  it('首条连接建立后补齐首次 HTTP 快照与订阅之间的消息', async () => {
+    const arrived: ChatMessage = { ...botMessage, id: 2, messageId: 'arrived-before-socket', content: '连接前刚收到的消息' }
+    fetchMessagesMock.mockResolvedValueOnce([botMessage]).mockResolvedValueOnce([botMessage, arrived])
+    const wrapper = await mountReadyChat()
+    expect(wrapper.text()).toContain(arrived.content)
+    wrapper.unmount()
+  })
+
+  it('加载中离开页面后，迟到的结果不能重新建立旧会话连接', async () => {
+    let resolveDetail!: (value: TicketDetail) => void
+    fetchTicketDetailMock.mockReturnValueOnce(new Promise<TicketDetail>(resolve => { resolveDetail = resolve }))
+    vi.mocked(chatSocket.connect).mockClear()
+    const wrapper = mount(ChatView, { global: globalOptions })
+    wrapper.unmount()
+    resolveDetail(detail)
+    await flushPromises()
+    expect(chatSocket.connect).not.toHaveBeenCalled()
+  })
+
+  it('核对接口失败时继续保留未知状态，不自动重发已写出的命令', async () => {
+    const wrapper = await mountReadyChat()
+    await wrapper.get('.message-input').setValue('受理结果未知')
+    await wrapper.get('.send-button').trigger('click')
+    const command = sendMock.mock.calls[0][0].data
+    wsHandlers.get('error')?.({ sessionId: 'session-1', clientMsgId: command.clientMsgId,
+      acceptance: 'UNKNOWN', message: '无法确认' })
+    await flushPromises()
+    fetchReceiptMock.mockRejectedValueOnce(new Error('receipt unavailable'))
+    const retry = wrapper.findAll('button').find(button => button.text() === '核对并重试')!
+    await retry.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('受理状态未知')
+    expect(sendMock).toHaveBeenCalledTimes(1)
+    expect((wrapper.get('.message-input').element as HTMLInputElement).value).toBe('受理结果未知')
+    wrapper.unmount()
+  })
+
+  it('收到持久化回执才清空对应草稿并确认受理', async () => {
+    const wrapper = await mountReadyChat()
+    const input = wrapper.get('.message-input')
+    await input.setValue('查询物流')
+    await wrapper.get('.send-button').trigger('click')
+    await flushPromises()
+    expect((input.element as HTMLInputElement).value).toBe('查询物流')
+    expect(wrapper.text()).toContain('发送中')
+    const clientMsgId = sendMock.mock.calls[0][0].data.clientMsgId
+    wsHandlers.get('chat_accepted')?.({ clientMsgId, id: 12, messageId: 'saved-user-12', sessionId: 'session-1', ticketId: 'ticket-1', ts: 123 })
+    await flushPromises()
+    expect((input.element as HTMLInputElement).value).toBe('')
+    expect(wrapper.text()).toContain('已受理')
+    expect(wrapper.findAll('.row-USER')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('受理回执不覆盖用户后来编辑的草稿，重复回执不增加气泡', async () => {
+    const wrapper = await mountReadyChat()
+    const input = wrapper.get('.message-input')
+    await input.setValue('第一条消息')
+    await wrapper.get('.send-button').trigger('click')
+    await input.setValue('第二条还没发送的草稿')
+    const receipt = { clientMsgId: sendMock.mock.calls[0][0].data.clientMsgId, id: 12, messageId: 'saved-user-12', sessionId: 'session-1', ticketId: 'ticket-1', ts: 123 }
+    wsHandlers.get('chat_accepted')?.(receipt)
+    wsHandlers.get('chat_accepted')?.(receipt)
+    await flushPromises()
+    expect((input.element as HTMLInputElement).value).toBe('第二条还没发送的草稿')
+    expect(wrapper.text()).toContain('已受理')
+    expect(wrapper.findAll('.row-USER')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('回执丢失后先核对持久化消息，已受理时不再次发送', async () => {
+    const wrapper = await mountReadyChat()
+    await wrapper.get('.message-input').setValue('查询物流')
+    await wrapper.get('.send-button').trigger('click')
+    const clientMsgId = sendMock.mock.calls[0][0].data.clientMsgId
+    wsHandlers.get('error')?.({ clientMsgId, sessionId: 'session-1', code: 'NETWORK_UNKNOWN', acceptance: 'UNKNOWN', message: '受理状态未知' })
+    await flushPromises()
+    fetchReceiptMock.mockResolvedValueOnce({ clientMsgId, message: { ...botMessage, id: 12, messageId: 'saved-user-12', senderType: 'USER', senderId: 'user-1', content: '查询物流' } })
+    const retry = wrapper.findAll('button').find(button => button.text() === '核对并重试')
+    expect(retry).toBeDefined()
+    await retry!.trigger('click')
+    await flushPromises()
+    expect(fetchReceiptMock).toHaveBeenCalledWith('session-1', clientMsgId)
+    expect(sendMock).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('已受理')
+    wrapper.unmount()
+  })
+
+  it('断线恢复同时核对工单快照，关闭的会话恢复为只读', async () => {
+    const wrapper = await mountReadyChat()
+    fetchTicketDetailMock.mockClear().mockResolvedValue({ ...detail, ticket: { ...detail.ticket, status: 'CLOSED' } })
+    wsHandlers.get('open')?.({ reconnected: true })
+    await flushPromises()
+    expect(fetchTicketDetailMock).toHaveBeenCalledWith('ticket-1')
+    expect(wrapper.find('.message-input').exists()).toBe(false)
+    expect(wrapper.text()).toContain('本次会话已关闭')
+    wrapper.unmount()
+  })
+
   it.each([
     { shiftKey: true, isComposing: false },
     { shiftKey: false, isComposing: true },
@@ -248,7 +440,7 @@ describe('Chat', () => {
     wrapper.unmount()
   })
 
-  it('发送前裁剪空格，使用当前会话构造 WebSocket 帧，并立即更新本地消息', async () => {
+  it('保留原始输入构造 WebSocket 帧，回执确认后清理对应草稿', async () => {
     const wrapper = await mountReadyChat()
     const input = wrapper.get('.message-input')
 
@@ -261,7 +453,7 @@ describe('Chat', () => {
       type: 'chat',
       data: {
         sessionId: 'session-1',
-        content: '请帮我查询物流',
+        content: '  请帮我查询物流  ',
         // 服务端据此去重：重连后客户端重发时沿用同一个值，否则同一句话会被处理两次
         clientMsgId: expect.any(String),
       },
@@ -269,7 +461,10 @@ describe('Chat', () => {
     expect(sendMock.mock.calls[0][0].data.clientMsgId).toBeTruthy()
     expect(wrapper.text()).toContain('请帮我查询物流')
     expect(wrapper.findAll('.row-USER')).toHaveLength(1)
+    wsHandlers.get('chat_accepted')?.({ clientMsgId: sendMock.mock.calls[0][0].data.clientMsgId, id: 12, messageId: 'saved-user-12', sessionId: 'session-1', ticketId: 'ticket-1', ts: 123 })
+    await flushPromises()
     expect((input.element as HTMLInputElement).value).toBe('')
+    wrapper.unmount()
   })
 
   it('每条消息带各自的 clientMsgId，不同消息不得复用同一个值', async () => {

@@ -15,8 +15,10 @@ import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.util.AntPathMatcher;
 import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.WebFilter;
 import org.springframework.web.server.WebFilterChain;
@@ -55,6 +57,12 @@ public class SubjectQuotaWebFilter implements WebFilter {
      * 偏偏那正是用户最需要看到它的时刻。</p>
      */
     private static final String PATH_MY_QUOTA = "/api/customer/user/quota";
+    /** 恢复查询只读已保存数据，不算一次提问；鉴权与会话归属仍由前置过滤器和入口负责。 */
+    private static final List<String> RECOVERY_READ_PATHS = List.of(
+        "/api/customer/user/sessions/*/receipts/*",
+        "/api/customer/user/sessions/*/messages",
+        "/api/customer/user/tickets/*");
+    private static final AntPathMatcher PATH_MATCHER = new AntPathMatcher();
 
     private final CustomerWorkProperties properties;
     private final SubjectQuotaGuard guard;
@@ -82,7 +90,7 @@ public class SubjectQuotaWebFilter implements WebFilter {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
         String path = exchange.getRequest().getPath().value();
-        if (isExempt(path) || !matches(path)) {
+        if (isExempt(path) || isRecoveryRead(exchange, path) || !matches(path)) {
             return chain.filter(exchange);
         }
         QuotaSubject subject = resolveSubject(exchange);
@@ -211,6 +219,11 @@ public class SubjectQuotaWebFilter implements WebFilter {
 
     private static boolean isExempt(String path) {
         return path.startsWith(PATH_ACTUATOR) || path.equals(PATH_HEALTH) || path.startsWith(PATH_MY_QUOTA);
+    }
+
+    private static boolean isRecoveryRead(ServerWebExchange exchange, String path) {
+        return HttpMethod.GET.equals(exchange.getRequest().getMethod())
+            && RECOVERY_READ_PATHS.stream().anyMatch(pattern -> PATH_MATCHER.match(pattern, path));
     }
 
     /** 429 + Retry-After；响应体形如 {@code {"status":429,"error":"Too Many Requests","message":...}}。 */

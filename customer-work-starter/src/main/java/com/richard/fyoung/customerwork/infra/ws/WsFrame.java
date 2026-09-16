@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.infra.ws;
 
 import com.richard.fyoung.customerwork.core.dto.ChatTerminalEnvelope;
+import com.richard.fyoung.customerwork.data.chatlog.ChatMessage;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -17,6 +18,8 @@ public record WsFrame(String type, Object data) {
 
     /** 用户/坐席一条完整对话消息（转发通道）。 */
     public static final String TYPE_CHAT = "chat";
+    /** 输入已落库；重复投递返回同一条消息，不表示 AI 或业务工具已经完成。 */
+    public static final String TYPE_CHAT_ACCEPTED = "chat_accepted";
     /** AI 流式增量片段。 */
     public static final String TYPE_CHAT_CHUNK = "chat_chunk";
     /** AI 流式结束（携带落库后的 messageId）。 */
@@ -49,6 +52,11 @@ public record WsFrame(String type, Object data) {
     public static final String KEY_SENDER_ID = "senderId";
     public static final String KEY_TS = "ts";
     public static final String KEY_CODE = "code";
+    public static final String KEY_ID = "id";
+    public static final String KEY_ACCEPTANCE = "acceptance";
+    public static final String ACCEPTANCE_REJECTED = "REJECTED";
+    public static final String ACCEPTANCE_UNKNOWN = "UNKNOWN";
+    public static final String ACCEPTANCE_ACCEPTED = "ACCEPTED";
 
     /**
      * 客户端为每条消息生成的标识，重发时沿用同一个值。
@@ -68,6 +76,18 @@ public record WsFrame(String type, Object data) {
         return new WsFrame(TYPE_CHAT, data);
     }
 
+    /** 受理回执只使用存储返回的消息号和游标，前端据此替换临时气泡并核对重发。 */
+    public static WsFrame chatAccepted(String clientMsgId, ChatMessage message) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put(KEY_CLIENT_MSG_ID, clientMsgId);
+        data.put(KEY_ID, message.id());
+        data.put(KEY_MESSAGE_ID, message.messageId());
+        data.put(KEY_SESSION_ID, message.sessionId());
+        data.put(KEY_TICKET_ID, message.ticketId());
+        data.put(KEY_TS, message.createdAtMs());
+        return new WsFrame(TYPE_CHAT_ACCEPTED, data);
+    }
+
     /** AI 流式增量帧：{@code {content}}。 */
     public static WsFrame chatChunk(String content) {
         Map<String, Object> data = new LinkedHashMap<>();
@@ -75,9 +95,32 @@ public record WsFrame(String type, Object data) {
         return new WsFrame(TYPE_CHAT_CHUNK, data);
     }
 
+    /** 增量附带服务端确定的会话与请求归属，避免同一用户多个页面串流。 */
+    public static WsFrame chatChunk(String content, String sessionId, String ticketId, String clientMsgId) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put(KEY_CONTENT, content);
+        data.put(KEY_SESSION_ID, sessionId);
+        data.put(KEY_TICKET_ID, ticketId);
+        data.put(KEY_CLIENT_MSG_ID, clientMsgId);
+        return new WsFrame(TYPE_CHAT_CHUNK, data);
+    }
+
+    /** 已保存回复携带真实分页游标和原输入标识，旧客户端仍可按原有字段消费。 */
+    public static WsFrame chatDone(ChatTerminalEnvelope terminal, ChatMessage message, String clientMsgId) {
+        Map<String, Object> data = terminalData(terminal, message.sessionId(), message.ticketId(), message.content(), message.createdAtMs());
+        data.put(KEY_ID, message.id());
+        data.put(KEY_CLIENT_MSG_ID, clientMsgId);
+        return new WsFrame(TYPE_CHAT_DONE, data);
+    }
+
     /** AI 流式结束帧：终止信封 + 会话归属 + 全文，前端据此定稿流式气泡。 */
     public static WsFrame chatDone(ChatTerminalEnvelope terminal, String sessionId, String ticketId,
                                    String content, long ts) {
+        return new WsFrame(TYPE_CHAT_DONE, terminalData(terminal, sessionId, ticketId, content, ts));
+    }
+
+    private static Map<String, Object> terminalData(ChatTerminalEnvelope terminal, String sessionId,
+                                                     String ticketId, String content, long ts) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put(KEY_MESSAGE_ID, terminal.messageId());
         data.put(KEY_FINISH_REASON, terminal.finishReason());
@@ -87,7 +130,7 @@ public record WsFrame(String type, Object data) {
         data.put(KEY_TICKET_ID, ticketId);
         data.put(KEY_CONTENT, content);
         data.put(KEY_TS, ts);
-        return new WsFrame(TYPE_CHAT_DONE, data);
+        return data;
     }
 
     /** 工单事件帧。 */
@@ -129,6 +172,18 @@ public record WsFrame(String type, Object data) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put(KEY_CODE, code);
         data.put(KEY_MESSAGE, message);
+        return new WsFrame(TYPE_ERROR, data);
+    }
+
+    /** 在原错误帧上补充本条消息归属和受理状态，旧客户端仍可读取 code/message。 */
+    public static WsFrame messageError(String code, String message, String sessionId,
+                                        String clientMsgId, String acceptance) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put(KEY_CODE, code);
+        data.put(KEY_MESSAGE, message);
+        data.put(KEY_SESSION_ID, sessionId);
+        data.put(KEY_CLIENT_MSG_ID, clientMsgId);
+        data.put(KEY_ACCEPTANCE, acceptance);
         return new WsFrame(TYPE_ERROR, data);
     }
 

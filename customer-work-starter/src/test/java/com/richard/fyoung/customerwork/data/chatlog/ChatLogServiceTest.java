@@ -8,6 +8,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * 聊天日志服务单测（内存存储）：messageId 生成、会话/工单双维度历史、beforeId 游标翻页与 limit。
@@ -28,6 +29,15 @@ class ChatLogServiceTest {
         assertTrue(m.messageId().startsWith("MSG-"));
         assertTrue(m.id() > 0);
         assertEquals("你好", m.content());
+    }
+
+    @Test
+    void memoryStore_shouldEnforceTheSameMessageIdentityAsJdbc() {
+        service.appendWithMessageId("REQ-1", "s1", "TK-1", TicketActorType.USER, "u1", "原消息");
+        assertThrows(RuntimeException.class, () -> service.appendWithMessageId(
+            "REQ-1", "s1", "TK-1", TicketActorType.USER, "u1", "被改动的内容"));
+        assertEquals("原消息", service.findByMessageId("REQ-1").orElseThrow().content());
+        assertEquals(1, service.historyBySession("s1", null, 10).size());
     }
 
     @Test

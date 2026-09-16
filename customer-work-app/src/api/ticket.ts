@@ -60,7 +60,16 @@ export interface FetchMessagesParams {
 }
 
 export function fetchMessages(sessionId: string, params: FetchMessagesParams = {}): Promise<ChatMessage[]> {
-  return request({ url: `/customer/user/sessions/${sessionId}/messages`, method: 'get', params })
+  return request({ url: `/customer/user/sessions/${sessionId}/messages`, method: 'get', params, silentError: true })
+}
+
+/** 只核对持久化回执；查询失败保留未知状态，不能据此自动重发。 */
+export function fetchMessageReceipt(sessionId: string, clientMsgId: string): Promise<{ clientMsgId: string; message: ChatMessage | null }> {
+  return request({
+    url: `/customer/user/sessions/${encodeURIComponent(sessionId)}/receipts/${encodeURIComponent(clientMsgId)}`,
+    method: 'get',
+    silentError: true,
+  })
 }
 
 export function handoffTicket(id: string, reason: string): Promise<void> {

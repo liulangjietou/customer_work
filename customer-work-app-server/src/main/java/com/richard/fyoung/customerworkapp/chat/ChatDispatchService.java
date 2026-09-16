@@ -20,14 +20,23 @@ import com.richard.fyoung.customerwork.safety.tenant.TenantContextThreadLocalAcc
 import com.richard.fyoung.customerwork.infra.ws.InboundMessageDeduplicator;
 import com.richard.fyoung.customerwork.infra.ws.WsFrame;
 import com.richard.fyoung.customerwork.infra.ws.WsSessionRegistry;
+import com.richard.fyoung.customerwork.infra.lock.InMemorySessionLock;
+import com.richard.fyoung.customerwork.infra.lock.SessionLock;
+import com.richard.fyoung.customerwork.infra.transaction.CustomerWorkTransactionExecutor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.nio.charset.StandardCharsets;
 
 /**
  * 对话分发核心：把一条用户/坐席消息按工单当前状态路由到 AI 自助、人工排队提示、坐席转发或转人工。
@@ -47,6 +56,9 @@ public class ChatDispatchService {
     private static final String SESSION_DELIMITER = ":";
 
     private static final int TITLE_MAX_LEN = 50;
+    /** cw_chat_message.content 使用 MySQL TEXT，按 UTF-8 字节数控制入口。 */
+    private static final int MESSAGE_CONTENT_MAX_BYTES = 65_535;
+    private static final int LOCAL_LOCK_WAIT_SECONDS = 10;
 
     private static final String HANDOFF_KEYWORD_REASON = "用户关键词触发转人工";
     private static final String NOTICE_HANDOFF = "正在为您转接人工客服，请稍候";
@@ -70,8 +82,10 @@ public class ChatDispatchService {
      * 等于这个功能对主战场不生效。</p>
      */
     private final SubjectQuotaGuard subjectQuotaGuard;
-    private final InboundMessageDeduplicator deduplicator;
+    private final SessionLock acceptanceLock;
+    private final CustomerWorkTransactionExecutor transactions;
 
+    /** 兼容内存嵌入式调用；短时去重器不再决定受理，生产装配注入现有锁和同库事务。 */
     public ChatDispatchService(TicketService ticketService,
                                ChatLogService chatLogService,
                                ChatTurnService chatTurnService,
@@ -79,18 +93,38 @@ public class ChatDispatchService {
                                WsSessionRegistry registry,
                                SubjectQuotaGuard subjectQuotaGuard,
                                InboundMessageDeduplicator deduplicator) {
+        this(ticketService, chatLogService, chatTurnService, keywordDetector, registry,
+            subjectQuotaGuard, new InMemorySessionLock(LOCAL_LOCK_WAIT_SECONDS), CustomerWorkTransactionExecutor.DIRECT);
+    }
+
+    @Autowired
+    public ChatDispatchService(TicketService ticketService, ChatLogService chatLogService,
+                                ChatTurnService chatTurnService, HandoffKeywordDetector keywordDetector,
+                                WsSessionRegistry registry, SubjectQuotaGuard subjectQuotaGuard,
+                                SessionLock acceptanceLock,
+                                ObjectProvider<CustomerWorkTransactionExecutor> transactions) {
+        this(ticketService, chatLogService, chatTurnService, keywordDetector, registry,
+            subjectQuotaGuard, acceptanceLock, transactions.getIfAvailable(() -> CustomerWorkTransactionExecutor.DIRECT));
+    }
+
+    /** 显式事务构造用于验证提交、回滚及跨实例唯一键竞争。 */
+    public ChatDispatchService(TicketService ticketService, ChatLogService chatLogService,
+                                ChatTurnService chatTurnService, HandoffKeywordDetector keywordDetector,
+                                WsSessionRegistry registry, SubjectQuotaGuard subjectQuotaGuard,
+                                SessionLock acceptanceLock, CustomerWorkTransactionExecutor transactions) {
         this.ticketService = ticketService;
         this.chatLogService = chatLogService;
         this.chatTurnService = chatTurnService;
         this.keywordDetector = keywordDetector;
         this.registry = registry;
         this.subjectQuotaGuard = subjectQuotaGuard;
-        this.deduplicator = deduplicator;
+        this.acceptanceLock = acceptanceLock;
+        this.transactions = transactions;
     }
 
     /** 分发动作：由工单状态与关键词共同决定。 */
     private enum Action {
-        HANDOFF, AI_STREAM, WAITING_AGENT_NOTICE, FORWARD_AGENT, WAITING_CONFIRM_NOTICE
+        HANDOFF, AI_STREAM, WAITING_AGENT_NOTICE, FORWARD_AGENT, WAITING_CONFIRM_NOTICE, REPLAY_RECEIPT
     }
 
     /** 准备阶段（阻塞落库）产出的决策：动作 + 相关工单快照 + 已落库的用户消息（转发坐席时带完整元数据）。 */
@@ -112,35 +146,35 @@ public class ChatDispatchService {
     public Mono<Void> onUserMessage(UserPrincipal user, String sessionId, String content,
                                     String clientMsgId) {
         if (!ownsSession(user.userId(), sessionId)) {
-            registry.pushToUser(user.userId(), WsFrame.error("CHAT-SESSION-DENIED", ERR_SESSION_OWNERSHIP));
-            return Mono.empty();
-        }
-        // 去重排在配额判定之前：重发不该扣额度，也不该产生第二次记账。
-        // 排在归属校验之后，是因为别人的会话本就不该走到这里、更不该在去重键里留下痕迹
-        if (deduplicator.isDuplicate(user.userId(), clientMsgId)) {
+            TenantContext.runWith(tenantOf(user), () -> registry.pushToUser(user.userId(),
+                WsFrame.messageError("CHAT-SESSION-DENIED", ERR_SESSION_OWNERSHIP,
+                    sessionId, clientMsgId, WsFrame.ACCEPTANCE_REJECTED)));
             return Mono.empty();
         }
         QuotaSubject subject = QuotaSubject.user(user.userId());
         AgentInvocationIdentity invocationIdentity = new AgentInvocationIdentity(
             tenantOf(user), subject.type(), subject.id(), true, user.accessEpoch())
             .withChannel(AgentInvocationIdentity.CHANNEL_USER_WS);
-        // 判定与记账都要在用户归属租户下进行：等级表按租户隔离，拿错租户就会查到别人那一档
-        SubjectQuotaDecision quota = TenantContext.callWith(tenantOf(user),
-            () -> subjectQuotaGuard.check(subject, QUOTA_RESOURCE_WS_CHAT));
-        if (quota.shouldBlock()) {
-            // 用 system 帧而非 error 帧：这不是故障，是额度用完了，前端应当把它当成一条正常的系统提示展示
-            registry.pushToUser(user.userId(), WsFrame.system(quota.message(), sessionId, null));
-            return Mono.empty();
-        }
-        TenantContext.runWith(tenantOf(user), () -> subjectQuotaGuard.recordRequest(subject));
-
-        return Mono.fromCallable(() -> prepare(user, sessionId, content))
+        AtomicBoolean accepted = new AtomicBoolean();
+        return Mono.fromCallable(() -> TenantContext.callWith(tenantOf(user),
+                () -> acceptUser(user, sessionId, content, clientMsgId, subject)))
             .subscribeOn(Schedulers.boundedElastic())
-            .flatMap(decision -> act(user.userId(), sessionId, content, decision))
+            .flatMap(decision -> {
+                accepted.set(true);
+                TenantContext.runWith(tenantOf(user), () -> registry.pushToUser(user.userId(),
+                    WsFrame.chatAccepted(clientMsgId, decision.userMessage())));
+                return TenantContext.callWith(tenantOf(user), () -> act(user, sessionId, content, clientMsgId, decision));
+            })
             .onErrorResume(e -> {
-                log.error("[session {}] user message dispatch failed, code={}", sessionId,
-                    "CHAT-USER-DISPATCH-FAIL", e);
-                registry.pushToUser(user.userId(), WsFrame.error("CHAT-USER-DISPATCH-FAIL", "消息处理失败，请稍后再试"));
+                String code = e instanceof MessageRejected rejected ? rejected.code : "CHAT-USER-DISPATCH-FAIL";
+                String message = e instanceof MessageRejected ? e.getMessage() : "消息受理状态尚未确认，请先核对会话记录。";
+                String state = accepted.get() ? WsFrame.ACCEPTANCE_ACCEPTED
+                    : e instanceof MessageRejected ? WsFrame.ACCEPTANCE_REJECTED : WsFrame.ACCEPTANCE_UNKNOWN;
+                if (!(e instanceof MessageRejected)) {
+                    log.error("User message dispatch failed, errorCode={}, sessionId={}", code, sessionId, e);
+                }
+                TenantContext.runWith(tenantOf(user), () -> registry.pushToUser(user.userId(),
+                    WsFrame.messageError(code, message, sessionId, clientMsgId, state)));
                 return Mono.empty();
             })
             // 主体与租户随流下传：token 记账发生在模型调用之后、好几次线程切换之外，
@@ -203,13 +237,81 @@ public class ChatDispatchService {
 
     // ---- 内部 ----
 
+    /** 先查持久化回执，再在同库事务内建单和保存输入；模型与转发只在提交后执行。 */
+    private Decision acceptUser(UserPrincipal user, String sessionId, String content,
+                                 String clientMsgId, QuotaSubject subject) {
+        if (content == null || content.isBlank()) {
+            throw new MessageRejected("CHAT_MESSAGE_EMPTY", "请输入消息或添加可解析的附件。");
+        }
+        if (content.getBytes(StandardCharsets.UTF_8).length > MESSAGE_CONTENT_MAX_BYTES) {
+            throw new MessageRejected("CHAT_MESSAGE_TOO_LARGE", "消息和附件内容过长，请缩短内容后发送。");
+        }
+        if (clientMsgId != null && clientMsgId.length() > ChatLogService.CLIENT_MESSAGE_ID_MAX_LENGTH) {
+            throw new MessageRejected("CHAT_MESSAGE_ID_INVALID", "消息标识过长，请重新输入。");
+        }
+        String messageId = ChatLogService.clientMessageId(tenantOf(user), sessionId,
+            TicketActorType.USER, user.userId(), clientMsgId);
+        SessionLock.Releasable lock = acceptanceLock.acquire("chat-accept:" + tenantOf(user) + ':' + sessionId);
+        try {
+            Optional<ChatMessage> existing = acceptedMessage(messageId, sessionId, TicketActorType.USER, user.userId(), content);
+            if (existing.isPresent()) {
+                return new Decision(Action.REPLAY_RECEIPT, null, existing.get());
+            }
+            SubjectQuotaDecision quota = subjectQuotaGuard.check(subject, QUOTA_RESOURCE_WS_CHAT);
+            if (quota.shouldBlock()) {
+                throw new MessageRejected("CHAT_QUOTA_EXCEEDED", quota.message());
+            }
+            Decision decision;
+            try {
+                decision = transactions.execute(() -> prepare(user, sessionId, content, messageId));
+            } catch (RuntimeException error) {
+                // 分布式锁过期或实例切换时仍由数据库唯一键裁决；回滚后才能看见竞争者提交的回执。
+                existing = acceptedMessage(messageId, sessionId, TicketActorType.USER, user.userId(), content);
+                if (existing.isPresent()) {
+                    return new Decision(Action.REPLAY_RECEIPT, null, existing.get());
+                }
+                throw error;
+            }
+            subjectQuotaGuard.recordRequest(subject);
+            return decision;
+        } finally {
+            lock.release();
+        }
+    }
+
+    private Optional<ChatMessage> acceptedMessage(String messageId, String sessionId,
+                                                  TicketActorType senderType, String senderId, String content) {
+        if (messageId == null) {
+            return Optional.empty();
+        }
+        Optional<ChatMessage> existing = chatLogService.findByMessageId(messageId);
+        existing.ifPresent(message -> {
+            if (!Objects.equals(message.sessionId(), sessionId) || message.senderType() != senderType
+                || !Objects.equals(message.senderId(), senderId) || !Objects.equals(message.content(), content)) {
+                throw new MessageRejected("CHAT_MESSAGE_ID_CONFLICT", "同一消息标识的内容不一致，请核对原消息。");
+            }
+        });
+        return existing;
+    }
+
+    /** 明确发生在受理前的业务拒绝；数据库或网络异常只能标为未知。 */
+    private static final class MessageRejected extends IllegalStateException {
+        private final String code;
+
+        private MessageRejected(String code, String message) {
+            super(message);
+            this.code = code;
+        }
+    }
+
     /** 阻塞准备阶段：定位/新建工单、落库用户消息、回填标题、关键词判定与状态路由。 */
-    private Decision prepare(UserPrincipal user, String sessionId, String content) {
+    private Decision prepare(UserPrincipal user, String sessionId, String content, String messageId) {
         Ticket ticket = ticketService.findActiveBySession(sessionId)
             .orElseGet(() -> ticketService.createForSession(sessionId, user.userId(), null, TicketCategory.CONSULT));
         String ticketId = ticket.getId();
-        ChatMessage userMessage =
-            chatLogService.append(sessionId, ticketId, TicketActorType.USER, user.userId(), content);
+        ChatMessage userMessage = messageId == null
+            ? chatLogService.append(sessionId, ticketId, TicketActorType.USER, user.userId(), content)
+            : chatLogService.appendWithMessageId(messageId, sessionId, ticketId, TicketActorType.USER, user.userId(), content);
         // 首条消息前 50 字回填空标题（已有标题不覆盖）
         ticketService.fillTitle(ticketId, title(content));
         // 刷新用户最后活跃时间：用户每发一条消息即重置空闲计时基准，避免活跃会话被空闲巡检误关
@@ -230,11 +332,15 @@ public class ChatDispatchService {
     }
 
     /** 决策执行：AI 流式或各类下推（非流式动作即时完成）。 */
-    private Mono<Void> act(String userId, String sessionId, String content, Decision decision) {
+    private Mono<Void> act(UserPrincipal user, String sessionId, String content, String clientMsgId, Decision decision) {
+        String userId = user.userId();
+        if (decision.action() == Action.REPLAY_RECEIPT) {
+            return Mono.empty();
+        }
         Ticket ticket = decision.ticket();
         switch (decision.action()) {
             case AI_STREAM:
-                return streamAi(userId, sessionId, content, ticket.getId());
+                return streamAi(user, sessionId, content, ticket.getId(), clientMsgId);
             case FORWARD_AGENT:
                 registry.pushToAgent(ticket.getAssignee(), WsFrame.chat(chatData(decision.userMessage())));
                 return Mono.empty();
@@ -252,21 +358,23 @@ public class ChatDispatchService {
     }
 
     /** AI 自助流式：逐增量推 chat_chunk，完成聚合落库 BOT 消息并推 chat_done。 */
-    private Mono<Void> streamAi(String userId, String sessionId, String content, String ticketId) {
+    private Mono<Void> streamAi(UserPrincipal user, String sessionId, String content, String ticketId, String clientMsgId) {
+        String userId = user.userId();
         return chatTurnService.stream(sessionId, content, ticketId)
-            .doOnNext(event -> {
+            .doOnNext(event -> TenantContext.runWith(tenantOf(user), () -> {
                 if (event instanceof ChatTurnEvent.Delta delta) {
-                    registry.pushToUser(userId, WsFrame.chatChunk(delta.content()));
+                    registry.pushToUser(userId, WsFrame.chatChunk(delta.content(), sessionId, ticketId, clientMsgId));
                 } else if (event instanceof ChatTurnEvent.Completed completed) {
                     ChatMessage botMsg = completed.completion().message();
                     registry.pushToUser(userId, WsFrame.chatDone(
-                        completed.completion().terminal(), botMsg.sessionId(), botMsg.ticketId(),
-                        botMsg.content(), botMsg.createdAtMs()));
+                        completed.completion().terminal(), botMsg, clientMsgId));
                 }
-            })
+            }))
             .onErrorResume(e -> {
                 log.error("[session {}] ai stream dispatch failed, code={}", sessionId, "CHAT-AI-STREAM-FAIL", e);
-                registry.pushToUser(userId, WsFrame.error("CHAT-AI-STREAM-FAIL", "AI 回复出错，请稍后再试"));
+                TenantContext.runWith(tenantOf(user), () -> registry.pushToUser(userId,
+                    WsFrame.messageError("CHAT-AI-STREAM-FAIL", "消息已受理，AI 回复暂未完成，请核对会话记录。",
+                        sessionId, clientMsgId, WsFrame.ACCEPTANCE_ACCEPTED)));
                 return Mono.empty();
             })
             .then();
@@ -289,6 +397,7 @@ public class ChatDispatchService {
     /** 由已落库消息构造 chat 帧载荷（与前端契约字段一致：messageId/sessionId/ticketId/senderType/senderId/content/ts）。 */
     private Map<String, Object> chatData(ChatMessage message) {
         Map<String, Object> data = new LinkedHashMap<>();
+        data.put(WsFrame.KEY_ID, message.id());
         data.put(WsFrame.KEY_MESSAGE_ID, message.messageId());
         data.put(WsFrame.KEY_SESSION_ID, message.sessionId());
         data.put(WsFrame.KEY_TICKET_ID, message.ticketId());
