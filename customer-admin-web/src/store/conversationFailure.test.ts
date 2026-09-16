@@ -84,7 +84,8 @@ for (const mode of ['chat', 'vibe'] as const) {
       conversation.input = '  下一条草稿\n保持格式  '
       handlers.onError?.(new Error('服务暂时不可用'))
       expect(conversation.messages.at(-1)?.text).toBe('第一段结果。第二段结果。')
-      expect(conversation.messages.at(-1)).toMatchObject({ failed: true, error: '服务暂时不可用' })
+      expect(conversation.messages.at(-1)).toMatchObject({ phase: 'UNKNOWN', failed: false })
+      expect(conversation.messages.at(-1)?.error).toContain('完成状态尚未确认')
       expect(conversation.input).toBe('  下一条草稿\n保持格式  ')
       expect(conversation.streaming).toBe(false)
     })

@@ -45,7 +45,10 @@ public enum ChatNodeKind {
      * VibeCoding 协作模式专用（P3-1）：多角色顺序流水中某个角色阶段的开始/完成/失败通知，
      * 由 {@code CollaborativeCodingService} 产出，前端据此渲染"需求分析→方案设计→编码实现→自测审查"的阶段卡片。
      */
-    ROLE_STAGE;
+    ROLE_STAGE,
+
+    /** 主调用结束且完成状态已核对后的独立终态，旧 done 只保留传输兼容。 */
+    TERMINAL;
 
     /**
      * 映射成 SSE {@code event} 名：{@link #ANSWER} 走 {@code message}（向后兼容旧协议，前端正文
@@ -54,6 +57,9 @@ public enum ChatNodeKind {
      * 前缀分流渲染成执行轨迹时间线，不用解析 JSON。
      */
     public String sseEventName() {
+        if (this == TERMINAL) {
+            return "terminal";
+        }
         if (this == ANSWER) {
             return "message";
         }

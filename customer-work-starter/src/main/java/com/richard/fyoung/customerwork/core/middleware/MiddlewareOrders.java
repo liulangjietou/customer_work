@@ -129,6 +129,9 @@ public final class MiddlewareOrders {
     /** RAG 知识的瞬态注入。 */
     public static final int KNOWLEDGE_INJECTION = 70;
 
+    /** 在原始模型响应上记录结束原因，不参与上下文组装或推理控制。 */
+    public static final int MODEL_COMPLETION = 65;
+
     /** 动态模型参数。 */
     public static final int DYNAMIC_OPTIONS = 60;
 

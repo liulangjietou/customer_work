@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 
 /**
  * 智能体工作区目录的解析、隔离与持久化。
@@ -157,13 +158,16 @@ public class AgentWorkspaceManager {
      * 未启用持久化时静默跳过；失败只记 error，不打断主链路（见 {@link SessionWorkspaceStorage#persist}）。</p>
      */
     public void persistSessionWorkspace(String agentCode, String sessionId) {
-        if (sessionWorkspaceStorage == null) {
-            return;
-        }
+        prepareSessionPersistence(agentCode, sessionId).getAsBoolean();
+    }
+
+    /** 在当前可信请求中冻结会话目录和对象键，供流结束或取消时保存并取得明确结果。 */
+    public BooleanSupplier prepareSessionPersistence(String agentCode, String sessionId) {
         String safeSession = requireSafeSessionId(sessionId);
-        sessionWorkspaceStorage.persist(agentCode, safeSession,
-            resolveWorkspace(AgentMemoryScope.current(agentCode))
-                .resolve(SESSIONS_DIR_NAME).resolve(safeSession).normalize());
+        Path workspace = resolveWorkspace(AgentMemoryScope.current(agentCode))
+            .resolve(SESSIONS_DIR_NAME).resolve(safeSession).normalize();
+        return sessionWorkspaceStorage == null ? () -> false
+            : sessionWorkspaceStorage.preparePersist(agentCode, safeSession, workspace);
     }
 
     /**

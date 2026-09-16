@@ -48,7 +48,7 @@ const resultTitle = computed(() => {
     case 'FAILED':
       return '本轮未完成'
     case 'UNKNOWN':
-      return '历史回复'
+      return props.error ? '完成状态未知' : '历史回复'
     default:
       return '本轮回复'
   }
@@ -76,6 +76,7 @@ async function copyResult() {
       'is-active': active,
       'is-failed': failed || phase === 'FAILED',
       'is-complete': phase === 'FINAL',
+      'is-uncertain': phase === 'UNKNOWN' && !!error,
     }"
   >
     <TraceTimeline
@@ -104,7 +105,7 @@ async function copyResult() {
       </span>
     </div>
 
-    <section v-if="text || active || failed" class="result-section" aria-label="智能体回答">
+    <section v-if="text || active || failed || error" class="result-section" aria-label="智能体回答">
       <header class="result-header">
         <span class="result-status" aria-hidden="true">
           <el-icon v-if="failed || phase === 'FAILED'"><WarningFilled /></el-icon>
@@ -127,7 +128,7 @@ async function copyResult() {
       </header>
 
       <div v-if="error" class="response-error" role="alert">
-        {{ error }}<small v-if="text">已保留生成的内容，可补充要求后再次发送。</small>
+        {{ error }}<small v-if="text">已保留收到的内容；涉及业务操作时，请先核对执行结果。</small>
       </div>
       <MarkdownRenderer v-if="text" :text="text" variant="answer" />
       <div v-else-if="active" class="result-placeholder" role="status" aria-live="polite">
@@ -149,12 +150,15 @@ async function copyResult() {
 .response-error {
   padding: 12px 14px;
   margin: 12px 0;
-  border: 1px solid var(--cw-danger);
+  border: 1px solid var(--response-error-color, var(--cw-danger));
   border-radius: 7px;
-  color: var(--cw-danger);
+  color: var(--response-error-color, var(--cw-danger));
   background: var(--cw-paper);
   font-size: 13px;
   line-height: 1.7;
+}
+.is-uncertain {
+  --response-error-color: var(--cw-warning, #925e13);
 }
 .response-error small {
   display: block;

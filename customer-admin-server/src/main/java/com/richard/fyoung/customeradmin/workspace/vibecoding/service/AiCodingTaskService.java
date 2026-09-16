@@ -20,13 +20,16 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.core.publisher.SignalType;
+
 
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
+import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatTerminal;
+import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatMessagePhase;
 
 /**
  * P2 诊断与重构编排层。实际源码检索、文件写入、回滚基线、测试报告仍由既有
@@ -94,7 +97,7 @@ public class AiCodingTaskService {
         AiCodingAuditLog audit = auditService.begin(AiCodingOperation.DIAGNOSE, agentCode, safeSession);
         try {
             Flux<ChatStreamChunk> source = vibeCodingService.stream(
-                agentCode, safeSession, DIAGNOSE_PROMPT.formatted(logText), DIAGNOSE_MODE);
+                agentCode, safeSession, DIAGNOSE_PROMPT.formatted(logText), DIAGNOSE_MODE, null, logText);
             return withAudit(source, audit, agentCode, safeSession, "DIAGNOSE_STREAM_");
         } catch (RuntimeException e) {
             auditService.finish(audit, e);
@@ -136,7 +139,7 @@ public class AiCodingTaskService {
                         return Flux.just(new ChatStreamChunk(ChatNodeKind.ANSWER,
                             timedOut.get() ? "重构计划确认已超时，任务未执行。" : "重构计划已拒绝，任务未执行。"));
                     }
-                    return vibeCodingService.stream(agentCode, safeSession, refactorPrompt(task), REFACTOR_MODE);
+                    return vibeCodingService.stream(agentCode, safeSession, refactorPrompt(task), REFACTOR_MODE, null, task.description());
                 });
 
             // 两条流同时订阅以驱动确认超时，但严格先输出 plan/plan_result，再输出执行结果。
@@ -170,19 +173,44 @@ public class AiCodingTaskService {
     private Flux<ChatStreamChunk> withAudit(Flux<ChatStreamChunk> source, AiCodingAuditLog audit,
                                             String agentCode, String sessionId, String signalPrefix,
                                             AtomicReference<String> terminalCode) {
-        return source.doFinally(signal -> {
+        AtomicReference<ChatTerminal> terminal = new AtomicReference<>(ChatTerminal.unknown(null));
+        AtomicBoolean audited = new AtomicBoolean();
+        Consumer<String> finish = code -> {
+            if (!audited.compareAndSet(false, true)) {
+                return;
+            }
             try {
                 auditService.applyChangedFiles(audit, vibeCodingService.listChangedArtifacts(agentCode, sessionId));
-            } catch (Exception e) {
-                log.error("resolve task changed files failed, code={}, operation={}, agentCode={}, sessionId={}",
-                    "AI-CODING-TASK-FILES-FAIL", audit.getOperation(), agentCode, sessionId, e);
-            }
-            String code = terminalCode.get();
-            if (code == null && signal != SignalType.ON_COMPLETE) {
-                code = signalPrefix + signal.name();
+            } catch (Exception error) {
+                log.error("Resolve task changed files failed, errorCode={}, operation={}, agentCode={}, sessionId={}",
+                    "AI_CODING_TASK_FILES_FAILED", audit.getOperation(), agentCode, sessionId, error);
             }
             auditService.finish(audit, code);
-        });
+        };
+        return source.filter(chunk -> {
+                if (chunk.kind() != ChatNodeKind.TERMINAL) {
+                    return true;
+                }
+                terminal.set(chunk.terminal());
+                return false;
+            })
+            .onErrorResume(error -> {
+                log.error("Coding task failed, errorCode={}, agentCode={}, sessionId={}",
+                    "AI_CODING_TASK_FAILED", agentCode, sessionId, error);
+                terminal.set(ChatTerminal.failed(terminal.get().turnId(), "AI_CODING_TASK_FAILED", "任务未完成，请查看执行记录。"));
+                return Flux.empty();
+            })
+            .concatWith(Mono.fromSupplier(() -> {
+                ChatTerminal result = terminal.get();
+                if (terminalCode.get() != null) {
+                    result = ChatTerminal.failed(result.turnId(), terminalCode.get(),
+                        "REFACTOR_REJECTED".equals(terminalCode.get()) ? "重构计划已拒绝，任务未执行。" : "重构计划确认已超时，任务未执行。");
+                }
+                finish.accept(result.phase() == ChatMessagePhase.FINAL ? null
+                    : result.finishReason() == null ? signalPrefix + result.phase().name() : result.finishReason());
+                return ChatStreamChunk.terminal(result);
+            }))
+            .doFinally(signal -> finish.accept(signalPrefix + signal.name()));
     }
 
     private void requireFeature(boolean enabled) {

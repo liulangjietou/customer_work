@@ -1,5 +1,7 @@
 package com.richard.fyoung.customeradmin.workspace.runtime;
 
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mockito;
 import com.richard.fyoung.customerwork.data.attachment.AttachmentFileStorage;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import org.junit.jupiter.api.AfterEach;
@@ -39,6 +41,31 @@ class SessionWorkspaceStorageTest {
     @AfterEach
     void clearTenant() {
         TenantContext.clear();
+    }
+
+    @Test
+    void preparedPersistence_shouldRetainOriginalTenantAcrossThreads(@TempDir Path tmp) throws Exception {
+        InMemoryObjectStore store = new InMemoryObjectStore();
+        SessionWorkspaceStorage storage = new SessionWorkspaceStorage(store, "workspaces/", BIG_ENOUGH);
+        Files.writeString(tmp.resolve("result.txt"), "result");
+        TenantContext.set("tenant-a");
+        var persist = storage.preparePersist("coder", "session-1", tmp);
+        TenantContext.set("tenant-b");
+        assertTrue(persist.getAsBoolean());
+        assertTrue(store.objects.containsKey("workspaces/tenant-a::coder/session-1.tar.gz"));
+        assertFalse(store.objects.containsKey("workspaces/tenant-b::coder/session-1.tar.gz"));
+        assertEquals("tenant-b", TenantContext.get(), "保存不能改动调用线程的租户上下文");
+    }
+
+    @Test
+    void preparedPersistence_shouldReportUploadFailure(@TempDir Path tmp) throws Exception {
+        AttachmentFileStorage store = Mockito.mock(AttachmentFileStorage.class);
+        Mockito.doThrow(new IOException("upload failed")).when(store)
+            .storeAt(ArgumentMatchers.anyString(), ArgumentMatchers.any());
+        SessionWorkspaceStorage storage = new SessionWorkspaceStorage(store, "workspaces/", BIG_ENOUGH);
+        Files.writeString(tmp.resolve("result.txt"), "kept locally");
+        assertFalse(storage.preparePersist("coder", "session-1", tmp).getAsBoolean());
+        assertEquals("kept locally", Files.readString(tmp.resolve("result.txt")));
     }
 
     @Test
@@ -189,7 +216,7 @@ class SessionWorkspaceStorageTest {
         new java.util.Random(42).nextBytes(bulky);
         Files.write(src.resolve("big.bin"), bulky);
 
-        storage.persist("coder", "sess-big", src);
+        assertFalse(storage.preparePersist("coder", "sess-big", src).getAsBoolean());
 
         assertTrue(store.objects.isEmpty(), "超过上限时应跳过保存，不能把内存打爆");
     }

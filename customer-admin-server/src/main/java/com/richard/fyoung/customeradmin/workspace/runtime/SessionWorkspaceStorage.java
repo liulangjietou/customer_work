@@ -19,6 +19,7 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Comparator;
 import java.util.Optional;
+import java.util.function.BooleanSupplier;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
@@ -100,22 +101,34 @@ public class SessionWorkspaceStorage {
      * <p>不抛异常——保存失败不该打断对话主链路，但会记 error（这是产出物唯一的持久化路径，失败必须可见）。</p>
      */
     public void persist(String agentCode, String sessionId, Path workspace) {
+        preparePersist(agentCode, sessionId, workspace).getAsBoolean();
+    }
+
+    /** 请求线程冻结对象键，异步保存时不重新读取租户 ThreadLocal；只有完整上传成功才返回 true。 */
+    public BooleanSupplier preparePersist(String agentCode, String sessionId, Path workspace) {
+        String key = objectKey(agentCode, sessionId);
+        return () -> persistAt(key, agentCode, sessionId, workspace);
+    }
+
+    private boolean persistAt(String key, String agentCode, String sessionId, Path workspace) {
         try {
             if (!Files.isDirectory(workspace)) {
-                return;
+                return false;
             }
             byte[] archive = archive(workspace);
             if (archive.length > maxArchiveBytes) {
-                log.error("vibecoding workspace too large to persist, code={}, agentCode={}, sessionId={}, bytes={}, limit={}",
-                    "VIBECODING-WORKSPACE-TOO-LARGE", agentCode, sessionId, archive.length, maxArchiveBytes);
-                return;
+                log.error("Vibecoding workspace too large to persist, errorCode={}, agentCode={}, sessionId={}, bytes={}, limit={}",
+                    "VIBECODING_WORKSPACE_TOO_LARGE", agentCode, sessionId, archive.length, maxArchiveBytes);
+                return false;
             }
-            fileStorage.storeAt(objectKey(agentCode, sessionId), archive);
-            log.info("vibecoding workspace persisted, agentCode={}, sessionId={}, bytes={}",
+            fileStorage.storeAt(key, archive);
+            log.info("Vibecoding workspace persisted, agentCode={}, sessionId={}, bytes={}",
                 agentCode, sessionId, archive.length);
-        } catch (Exception e) {
-            log.error("persist vibecoding workspace failed, code={}, agentCode={}, sessionId={}",
-                "VIBECODING-WORKSPACE-PERSIST-FAIL", agentCode, sessionId, e);
+            return true;
+        } catch (Exception error) {
+            log.error("Persist vibecoding workspace failed, errorCode={}, agentCode={}, sessionId={}",
+                "VIBECODING_WORKSPACE_PERSIST_FAILED", agentCode, sessionId, error);
+            return false;
         }
     }
 
@@ -194,11 +207,9 @@ public class SessionWorkspaceStorage {
                 }
 
                 @Override
-                public FileVisitResult visitFileFailed(Path file, IOException e) {
-                    // 单个文件读不到（临时文件被删/权限）不该让整次归档失败
-                    log.error("skip unreadable file while archiving workspace, code={}, file={}",
-                        "VIBECODING-WORKSPACE-ARCHIVE-SKIP", file, e);
-                    return FileVisitResult.CONTINUE;
+                public FileVisitResult visitFileFailed(Path file, IOException error) throws IOException {
+                    // 不完整归档不能覆盖权威副本，也不能被确认成保存成功。
+                    throw error;
                 }
             });
         }

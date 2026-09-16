@@ -32,7 +32,6 @@ import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.core.publisher.SignalType;
 import reactor.core.scheduler.Schedulers;
 
 import java.nio.file.Path;
@@ -45,6 +44,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
+import java.util.function.Consumer;
+import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatTerminal;
+import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatMessagePhase;
 
 /**
  * 多 Agent 协作编程（P3-1 降级版）：把一次需求输入串成"需求分析 → 方案设计 → 编码实现 → 自测审查"
@@ -138,6 +140,8 @@ public class CollaborativeCodingService {
         // 顺序流水共享的可变状态（Flux.concat 严格串行，无并发写）：
         AtomicReference<String> context = new AtomicReference<>("【用户原始需求】\n" + userText);
         AtomicBoolean aborted = new AtomicBoolean(false);
+        AtomicReference<ChatTerminal> codingTerminal = new AtomicReference<>();
+        AtomicBoolean auditFinished = new AtomicBoolean();
         AtomicInteger inputTokens = new AtomicInteger(0);
         AtomicInteger outputTokens = new AtomicInteger(0);
         AtomicInteger totalTokens = new AtomicInteger(0);
@@ -149,23 +153,31 @@ public class CollaborativeCodingService {
             AdminCollaborationProperties.Role role = roles.get(i);
             int index = i + 1;
             stageFluxes.add(roleFlux(agentCode, safeSession, userText, role, index, total, model, context,
-                aborted, tokens, mode, attachmentIds, rawInput));
+                aborted, tokens, mode, attachmentIds, rawInput, codingTerminal));
         }
 
         log.info("[collab] collaboration pipeline started, agentCode={}, sessionId={}, roles={}",
             agentCode, safeSession, roles.stream().map(AdminCollaborationProperties.Role::getName).collect(Collectors.toList()));
 
-        return Flux.concat(stageFluxes).doFinally(signal -> {
+        Consumer<String> finishAudit = errorCode -> {
+            if (!auditFinished.compareAndSet(false, true)) {
+                return;
+            }
             audit.setInputTokens(inputTokens.get() > 0 ? inputTokens.get() : null);
             audit.setOutputTokens(outputTokens.get() > 0 ? outputTokens.get() : null);
             audit.setTotalTokens(totalTokens.get() > 0 ? totalTokens.get() : null);
             auditService.applyChangedFiles(audit, safeChangedFiles(agentCode, safeSession));
-            String errorCode = aborted.get() ? ResultCode.COLLAB_ROLE_FAILED.name()
-                : (signal == SignalType.ON_COMPLETE ? null : "COLLAB_STREAM_" + signal.name());
             auditService.finish(audit, errorCode);
-            log.info("[collab] collaboration pipeline finished, agentCode={}, sessionId={}, aborted={}",
-                agentCode, safeSession, aborted.get());
-        });
+        };
+        // 内部编码终态只用于编排判断；审查等后续角色全部结束后，才发布外层唯一终态。
+        return Flux.concat(stageFluxes)
+            .concatWith(Mono.fromSupplier(() -> {
+                ChatTerminal result = collaborationTerminal(codingTerminal.get(), aborted.get());
+                finishAudit.accept(result.phase() == ChatMessagePhase.FINAL ? null
+                    : result.finishReason() == null ? ResultCode.COLLAB_ROLE_FAILED.name() : result.finishReason());
+                return ChatStreamChunk.terminal(result);
+            }))
+            .doFinally(signal -> finishAudit.accept("COLLAB_STREAM_" + signal.name()));
     }
 
     /** 按角色类型分派构建单个阶段的事件流。 */
@@ -173,11 +185,12 @@ public class CollaborativeCodingService {
                                            AdminCollaborationProperties.Role role, int index, int total,
                                            Model model, AtomicReference<String> context,
                                            AtomicBoolean aborted, TokenSink tokens, String mode,
-                                           List<String> attachmentIds, String rawInput) {
+                                           List<String> attachmentIds, String rawInput,
+                                           AtomicReference<ChatTerminal> codingTerminal) {
         String type = normalizeType(role.getType());
         if (RoleStageEvent.TYPE_CODING.equals(type)) {
             return codingRoleFlux(agentCode, sessionId, role, index, total, context, aborted, mode,
-                attachmentIds, rawInput);
+                attachmentIds, rawInput, codingTerminal);
         }
         // PLAN / REVIEW 均为一次性模型调用，仅提示词构造不同
         return oneShotRoleFlux(agentCode, sessionId, userText, role, type, index, total, model, context, aborted, tokens);
@@ -230,14 +243,30 @@ public class CollaborativeCodingService {
     private Flux<ChatStreamChunk> codingRoleFlux(String agentCode, String sessionId,
                                                  AdminCollaborationProperties.Role role, int index, int total,
                                                  AtomicReference<String> context, AtomicBoolean aborted, String mode,
-                                                 List<String> attachmentIds, String rawInput) {
+                                                 List<String> attachmentIds, String rawInput,
+                                                 AtomicReference<ChatTerminal> codingTerminal) {
         return Flux.defer(() -> {
             if (aborted.get()) {
                 return Flux.empty();
             }
             String codingPrompt = buildCodingPrompt(role, context.get());
+            AtomicBoolean receivedTerminal = new AtomicBoolean();
             Flux<ChatStreamChunk> coding = vibeCodingService.stream(agentCode, sessionId, codingPrompt,
                 mode, attachmentIds, rawInput)
+                .concatMap(chunk -> {
+                    if (chunk.kind() != ChatNodeKind.TERMINAL) {
+                        return Flux.just(chunk);
+                    }
+                    receivedTerminal.set(true);
+                    ChatTerminal result = chunk.terminal();
+                    codingTerminal.set(result);
+                    if (result.phase() != ChatMessagePhase.FINAL) {
+                        aborted.set(true);
+                        return Flux.just(stageChunk(RoleStageEvent.failed(role.getName(), RoleStageEvent.TYPE_CODING,
+                            index, total, result.error() == null ? "编码阶段尚未完成。" : result.error())));
+                    }
+                    return Flux.empty();
+                })
                 .onErrorResume(err -> {
                     aborted.set(true);
                     log.error("[collab] coding role failed, code={}, agentCode={}, role={}",
@@ -245,12 +274,38 @@ public class CollaborativeCodingService {
                     return Flux.just(stageChunk(RoleStageEvent.failed(role.getName(), RoleStageEvent.TYPE_CODING,
                         index, total, "编码阶段执行失败：" + describeError(err))));
                 });
-            Flux<ChatStreamChunk> done = Flux.defer(() -> aborted.get() ? Flux.empty()
-                : Flux.just(stageChunk(RoleStageEvent.done(role.getName(), RoleStageEvent.TYPE_CODING, index, total, null))));
+            Flux<ChatStreamChunk> done = Flux.defer(() -> {
+                if (aborted.get()) {
+                    return Flux.empty();
+                }
+                if (!receivedTerminal.get()) {
+                    aborted.set(true);
+                    codingTerminal.set(ChatTerminal.unknown(null));
+                    return Flux.just(stageChunk(RoleStageEvent.failed(role.getName(), RoleStageEvent.TYPE_CODING,
+                        index, total, "编码完成状态尚未确认，已停止后续角色。")));
+                }
+                return Flux.just(stageChunk(RoleStageEvent.done(role.getName(), RoleStageEvent.TYPE_CODING, index, total, null)));
+            });
             return Flux.concat(
                 Flux.just(stageChunk(RoleStageEvent.start(role.getName(), RoleStageEvent.TYPE_CODING, index, total))),
                 coding, done);
         });
+    }
+
+    /** 协作完成表示角色流程已结束；historySaved 仍只指编码阶段的主 Agent 会话记录。 */
+    private ChatTerminal collaborationTerminal(ChatTerminal coding, boolean aborted) {
+        if (coding != null && coding.phase() != ChatMessagePhase.FINAL) {
+            return coding;
+        }
+        if (aborted) {
+            return new ChatTerminal(coding == null ? null : coding.turnId(),
+                coding == null ? null : coding.messageId(), ChatMessagePhase.FAILED,
+                ResultCode.COLLAB_ROLE_FAILED.name(), coding != null && coding.historySaved(),
+                coding == null ? null : coding.artifactsSaved(), "协作流程未完成，请查看角色执行记录。");
+        }
+        return coding == null
+            ? new ChatTerminal(null, null, ChatMessagePhase.FINAL, "COLLABORATION_COMPLETED", false, null, null)
+            : coding;
     }
 
     // ---------------------- prompt builders ----------------------

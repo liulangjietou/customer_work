@@ -32,7 +32,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.SignalType;
+import reactor.core.publisher.Mono;
 
 import java.io.IOException;
 import java.nio.charset.MalformedInputException;
@@ -51,6 +51,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BooleanSupplier;
+import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatTerminal;
+import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatMessagePhase;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -204,6 +208,9 @@ public class VibeCodingService {
         // （而非注入路径指引后的 enrichedText，报表展示的是用户真实提问）。
         AgentCallMeta callMeta = agentCallMetaFactory.build(agentCode, AgentCallSessionType.VIBE_CODING, rawInput);
         AtomicReference<ChatUsage> usageTotal = new AtomicReference<>();
+        BooleanSupplier persistWorkspace = workspaceManager.prepareSessionPersistence(agentCode, safeSession);
+        AtomicReference<ChatTerminal> terminal = new AtomicReference<>(ChatTerminal.unknown(null));
+        AtomicBoolean finalized = new AtomicBoolean();
 
         AtomicReference<Map<String, FileFingerprint>> lastSnapshot = new AtomicReference<>(initialSnapshot);
         // 失败自动修复循环的进度计数（本轮对话内累积）：testRun=第几次编译/测试执行，
@@ -214,30 +221,49 @@ public class VibeCodingService {
         // chatStream 统一承接（对话/VibeCoding/协作共用同一套闭环），本类只在其输出上叠加 file_change/
         // test_report 检测与审计，plan 事件作为普通 chunk 透传给前端。
         Flux<ChatStreamChunk> chatFlux = chatService.chatStream(agentCode, sessionId, enrichedText, mode, callMeta, attachmentIds, usageTotal::set)
-            .concatMap(chunk -> chunk.kind() == ChatNodeKind.TOOL_RESULT
-                // 顺序：原始工具结果 → 结构化 test_report（若可识别为编译/测试执行）→ 实时 file_change
-                ? Flux.concat(Flux.just(chunk),
-                    Flux.fromIterable(detectTestReport(chunk, testRun, failedRuns)),
-                    Flux.fromIterable(detectFileChanges(sessionWorkspace, lastSnapshot)))
-                : Flux.just(chunk));
-        // 流结束兜底：再检测一次文件变更，防止最后一次写入恰好没有跟在任何 TOOL_RESULT 之后（如异步落盘）。
-        // docker 模式产物经 bind mount（P1-3）实时落宿主机会话目录，与 local 一样直接读磁盘即可，无需事后搬运。
-        // Plan Mode 挂起/确认（plan/plan_result）由 ChatService.chatStream 内部的会话通道承接并合并进流
-        // （见上），plan 事件此处作为普通 chunk 顺流透传，不再由本类另开通道，避免同一 (agentCode, sessionId)
-        // 双开通道相互顶替。本类只在末尾兜底再检测一次文件变更并落审计。
-        return chatFlux.concatWith(Flux.defer(() ->
-            Flux.fromIterable(detectFileChanges(sessionWorkspace, lastSnapshot))
-        )).doFinally(signal -> {
-            // 审计（需求 §5.2/§5.3）：变更文件 = 本轮初始快照 vs 最终快照（含删除），token 为本轮
-            // 全部模型调用的汇总；ChatService 内部已把流错误兜底成正常完成，这里的非 COMPLETE
-            // 信号主要是用户取消/连接断开，如实记录。
-            auditService.applyUsage(audit, usageTotal.get());
-            auditService.applyChangedFiles(audit, changedPaths(initialSnapshot, snapshot(sessionWorkspace)));
-            auditService.finish(audit, signal == SignalType.ON_COMPLETE ? null : "VIBECODING_STREAM_" + signal.name());
-            // 产出物落权威存储：工作区在系统临时目录，不保存的话 OS 一清理 / 容器一销毁本轮生成的代码就没了。
-            // 放在 doFinally 而非 onComplete——用户中途取消时本轮已写出的文件同样要保住。
-            workspaceManager.persistSessionWorkspace(agentCode, safeSession);
-        });
+            .concatMap(chunk -> {
+                if (chunk.kind() == ChatNodeKind.TERMINAL) {
+                    terminal.set(chunk.terminal());
+                    return Flux.empty();
+                }
+                return chunk.kind() == ChatNodeKind.TOOL_RESULT
+                    ? Flux.concat(Flux.just(chunk),
+                        Flux.fromIterable(detectTestReport(chunk, testRun, failedRuns)),
+                        Flux.fromIterable(detectFileChanges(sessionWorkspace, lastSnapshot)))
+                    : Flux.just(chunk);
+            })
+            .onErrorResume(error -> {
+                log.error("Vibecoding stream failed, errorCode={}, agentCode={}",
+                    "VIBECODING_STREAM_ERROR", agentCode, error);
+                terminal.set(ChatTerminal.failed(terminal.get().turnId(), "VIBECODING_STREAM_ERROR", "编码执行未完成，请查看执行记录。"));
+                return Flux.empty();
+            });
+        // 先补最后一次文件变更、保存产物和审计，再向下游发布唯一终态。取消仍需保存已有产物。
+        return chatFlux.concatWith(Flux.defer(() -> Flux.fromIterable(detectFileChanges(sessionWorkspace, lastSnapshot))))
+            .concatWith(Mono.fromSupplier(() -> {
+                finalized.set(true);
+                ChatTerminal result = terminal.get().withArtifactsSaved(persistWorkspace.getAsBoolean());
+                terminal.set(result);
+                finishStreamAudit(audit, usageTotal.get(), initialSnapshot, sessionWorkspace,
+                    result.phase() == ChatMessagePhase.FINAL ? null
+                        : Boolean.FALSE.equals(result.artifactsSaved()) ? "VIBECODING_WORKSPACE_PERSIST_FAILED"
+                        : result.finishReason() == null ? "VIBECODING_" + result.phase().name() : result.finishReason());
+                return ChatStreamChunk.terminal(result);
+            }))
+            .doFinally(signal -> {
+                if (finalized.compareAndSet(false, true)) {
+                    persistWorkspace.getAsBoolean();
+                    finishStreamAudit(audit, usageTotal.get(), initialSnapshot, sessionWorkspace,
+                        "VIBECODING_STREAM_" + signal.name());
+                }
+            });
+    }
+
+    private void finishStreamAudit(AiCodingAuditLog audit, ChatUsage usage,
+                                   Map<String, FileFingerprint> initialSnapshot, Path workspace, String errorCode) {
+        auditService.applyUsage(audit, usage);
+        auditService.applyChangedFiles(audit, changedPaths(initialSnapshot, snapshot(workspace)));
+        auditService.finish(audit, errorCode);
     }
 
     /**

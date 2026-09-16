@@ -11,6 +11,7 @@ import { createPlanCard, type PlanCard } from '@/utils/planCard'
 import { revokeAttachmentPreviews, type MessageAttachmentVM } from '@/utils/attachment'
 import { createTextChunkBatcher } from '@/utils/textChunkBatcher'
 import { presentChatHistory } from '@/utils/chatMessagePresentation'
+import { createChatCompletion } from '@/utils/chatCompletion'
 import type {
   ChatMessagePhase,
   ExecutionMode,
@@ -95,7 +96,7 @@ export function createChatConversation(
     attachments: [],
     streaming: false,
     interrupting: false,
-    interrupted: false,
+    interrupted: messages.at(-1)?.phase === 'STOPPED',
     abort: null,
     mode: 'auto',
     pendingPlans: new Map(),
@@ -275,6 +276,7 @@ export const useChatConversationsStore = defineStore('chatConversations', {
         if (isActive()) onScroll?.()
       })
 
+      const completion = createChatCompletion(assistantMessage, conv)
       const abortStream = streamChat(
         agentCode,
         { sessionId: sid, message: messageToSend, rawInput: text, mode: conv.mode, attachmentIds },
@@ -282,9 +284,13 @@ export const useChatConversationsStore = defineStore('chatConversations', {
           onEvent: (event) => {
             const c = this.byAgent[agentCode]?.conversations[sid]
             if (!c) return
+            if (event.event === 'terminal') {
+              textBatcher.flush()
+              completion.terminal(event.data)
+              return
+            }
             if (event.event === 'done') {
               textBatcher.flush()
-              c.streaming = false
               return
             }
             if (event.event === 'plan') {
@@ -340,28 +346,11 @@ export const useChatConversationsStore = defineStore('chatConversations', {
           },
           onError: (error) => {
             textBatcher.flush()
-            const c = this.byAgent[agentCode]?.conversations[sid]
-            if (c) {
-              c.streaming = false
-              c.interrupting = false
-            }
-            // 失败信息落在对话流里，紧跟用户刚发出的那句话——飘在页面顶部的提示与它无从对应，
-            // 用户看到的是自己的消息孤零零挂在那儿、没有任何回应
-            const text = error instanceof Error ? error.message : String(error)
-            assistantMessage.error = text
-            assistantMessage.failed = true
+            completion.fail(error)
           },
           onComplete: () => {
             textBatcher.flush()
-            const c = this.byAgent[agentCode]?.conversations[sid]
-            if (c) {
-              c.streaming = false
-              // 若这轮是用户主动点了"终止"后自然结束的，翻转成"可继续"状态，冒出继续按钮
-              if (c.interrupting) {
-                c.interrupting = false
-                c.interrupted = true
-              }
-            }
+            completion.complete()
             this.historyVersion[agentCode] = (this.historyVersion[agentCode] ?? 0) + 1
           },
         },
