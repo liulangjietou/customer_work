@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import type { FormInstance } from 'element-plus'
 import {
   createMcp,
@@ -14,6 +14,9 @@ import McpContractDialog from '@/components/McpContractDialog.vue'
 import McpDebugDialog from '@/components/McpDebugDialog.vue'
 import CrudLoadState from '@/components/CrudLoadState.vue'
 import { usePagedList } from '@/composables/usePagedList'
+import { useCrudForm } from '@/composables/useCrudForm'
+import { useRowMutation } from '@/composables/useRowMutation'
+import { useAuthSubmissionScope } from '@/composables/useAuthSubmissionScope'
 import { credentialStatusLabel } from '@/utils/credentialPresentation'
 import { useAuthStore } from '@/store/auth'
 import type { McpSaveRequest, McpVO, PageQuery } from '@/types/api'
@@ -26,21 +29,39 @@ const { loading, loadError, list, total, query, loadList, handleSearch } = usePa
   initQuery: () => ({ pageNum: 1, pageSize: 10, keyword: '' }),
   page: pageMcps,
 })
-const testingId = ref<number | null>(null)
-
-const dialogVisible = ref(false)
-const dialogMode = ref<'create' | 'edit' | 'copy'>('create')
+const probe = useRowMutation('mcp:view')
+const deletion = useRowMutation('mcp:delete')
+const captureSubmission = useAuthSubmissionScope()
+const isCopy = ref(false)
 const formRef = ref<FormInstance>()
-const editingId = ref<number | null>(null)
-const form = reactive<McpSaveRequest>({
-  mcpName: '',
-  mcpType: 'sse',
-  config: '',
-  description: '',
-  secretExpiresAt: null,
-  allowedSubjectTypes: ['ADMIN_USER'],
-  status: 1,
+let detailRequestId = 0
+const {
+  submitting, dialogVisible, dialogMode: formMode, form,
+  openCreate: openCreateForm, openEdit: openEditForm, handleSubmit,
+} = useCrudForm<McpVO, McpSaveRequest>({
+  formRef,
+  create: createMcp,
+  update: updateMcp,
+  initForm: () => ({ mcpName: '', mcpType: 'sse', config: '', description: '',
+    secretExpiresAt: null, allowedSubjectTypes: ['ADMIN_USER'], status: 1 }),
+  toForm: detail => ({ mcpName: detail.mcpName, mcpType: detail.mcpType,
+    config: detail.config, description: detail.description,
+    secretExpiresAt: detail.credential?.expiresAt ?? null,
+    allowedSubjectTypes: [...detail.allowedSubjectTypes], status: detail.status }),
+  beforeSubmit: (mode, values) => {
+    if (!auth.hasPermission(mode === 'edit' ? 'mcp:edit' : 'mcp:add')) return false
+    if (isCopy.value && !auth.hasPermission('mcp:edit')) return false
+    if (mode !== 'edit' && values.config.includes(MCP_SECRET_PLACEHOLDER)) {
+      ElMessage.error('新建或复制 MCP 必须重新提供 secret，不能提交脱敏占位符')
+      return false
+    }
+    return true
+  },
+  messages: { get created() { return isCopy.value ? '复制成功' : '新建成功' } },
+  onSaved: loadList,
 })
+const dialogMode = computed(() => formMode.value === 'edit' ? 'edit' : isCopy.value ? 'copy' : 'create')
+watch(dialogVisible, visible => { if (!visible) detailRequestId += 1 }, { flush: 'sync' })
 
 const subjectTypeOptions = [
   { value: 'ADMIN_USER', label: '后台用户' },
@@ -75,100 +96,59 @@ function validateConfigJson(_rule: unknown, value: string, callback: (error?: Er
 }
 
 function openCreate() {
-  dialogMode.value = 'create'
-  editingId.value = null
-  Object.assign(form, {
-    mcpName: '',
-    mcpType: 'sse',
-    config: '',
-    description: '',
-    secretExpiresAt: null,
-    allowedSubjectTypes: ['ADMIN_USER'],
-    status: 1,
-  })
-  dialogVisible.value = true
+  if (!auth.hasPermission('mcp:add')) return
+  detailRequestId += 1
+  isCopy.value = false
+  openCreateForm()
 }
 
-async function openEdit(row: McpVO) {
-  const detail = await getMcp(row.id)
-  dialogMode.value = 'edit'
-  editingId.value = row.id
-  Object.assign(form, {
-    mcpName: detail.mcpName,
-    mcpType: detail.mcpType,
-    config: detail.config,
-    description: detail.description,
-    secretExpiresAt: detail.credential?.expiresAt ?? null,
-    allowedSubjectTypes: [...detail.allowedSubjectTypes],
-    status: detail.status,
-  })
-  dialogVisible.value = true
-}
-
-/** 复制必须重新提供详情里被脱敏的 secret，禁止把占位符当作真实凭据写入新记录。 */
-async function openCopy(row: McpVO) {
-  const detail = await getMcp(row.id)
-  dialogMode.value = 'copy'
-  editingId.value = null
-  Object.assign(form, {
-    mcpName: `${detail.mcpName}-副本`,
-    mcpType: detail.mcpType,
-    config: detail.config,
-    description: detail.description,
-    secretExpiresAt: null,
-    allowedSubjectTypes: [...detail.allowedSubjectTypes],
-    status: detail.status,
-  })
-  dialogVisible.value = true
-  if (detail.config.includes(MCP_SECRET_PLACEHOLDER)) {
-    ElMessage.warning('配置中的 secret 已脱敏，复制前必须将占位符替换为真实凭据')
+/** 详情可能迟到；只有最后一次打开操作可以创建表单，复制仍必须重新提供脱敏凭据。 */
+async function loadDetail(row: McpVO, copy: boolean) {
+  if (!auth.hasPermission('mcp:edit') || (copy && !auth.hasPermission('mcp:add'))) return
+  const requestId = ++detailRequestId
+  const currentIdentity = captureSubmission()
+  try {
+    const detail = await getMcp(row.id)
+    if (!currentIdentity() || requestId !== detailRequestId) return
+    isCopy.value = copy
+    openEditForm(detail)
+    if (copy) {
+      const values = { ...form, mcpName: `${detail.mcpName}-副本`, secretExpiresAt: null }
+      openCreateForm()
+      Object.assign(form, values)
+      if (detail.config.includes(MCP_SECRET_PLACEHOLDER)) {
+        ElMessage.warning('配置中的 secret 已脱敏，复制前必须将占位符替换为真实凭据')
+      }
+    }
+  } catch {
+    // 请求层提示失败；保留现有表单，允许重新打开详情。
   }
 }
 
-async function handleSubmit() {
-  const valid = await formRef.value?.validate().catch(() => false)
-  if (!valid) {
-    return
-  }
-  if (dialogMode.value !== 'edit' && form.config.includes(MCP_SECRET_PLACEHOLDER)) {
-    ElMessage.error('新建或复制 MCP 必须重新提供 secret，不能提交脱敏占位符')
-    return
-  }
-  if (dialogMode.value === 'edit' && editingId.value) {
-    await updateMcp(editingId.value, form)
-    ElMessage.success('保存成功')
-  } else {
-    await createMcp(form)
-    ElMessage.success(dialogMode.value === 'copy' ? '复制成功' : '新建成功')
-  }
-  dialogVisible.value = false
-  await loadList()
-}
+function openEdit(row: McpVO) { return loadDetail(row, false) }
+function openCopy(row: McpVO) { return loadDetail(row, true) }
 
 async function handleDelete(row: McpVO) {
-  await ElMessageBox.confirm(`确认删除 MCP「${row.mcpName}」？`, '提示', { type: 'warning' })
-  try {
+  let deleted = false
+  await deletion.run(row.id, async isCurrent => {
+    await ElMessageBox.confirm(`确认删除 MCP「${row.mcpName}」？`, '提示', { type: 'warning' })
+    if (!isCurrent()) return
     await deleteMcp(row.id)
+    deleted = true
+  }, async () => {
+    if (!deleted) return
     ElMessage.success('删除成功')
     await loadList()
-  } catch {
-    // 引用校验失败的提示已由 axios 拦截器统一弹出
-  }
+  })
 }
 
 async function handleTest(row: McpVO) {
-  testingId.value = row.id
-  try {
+  await probe.run(row.id, async isCurrent => {
     const result = await testMcpConnectivity(row.id)
-    if (result.testStatus === 1) {
-      ElMessage.success('连通性测试成功')
-    } else {
-      ElMessage.error(result.message || '连通性测试失败')
-    }
-    await loadList()
-  } finally {
-    testingId.value = null
-  }
+    if (!isCurrent()) return
+    if (result.testStatus === 1) ElMessage.success('连通性测试成功')
+    else ElMessage.error(result.message || '连通性测试失败')
+  }, loadList)
 }
 
 const debugVisible = ref(false)
@@ -189,6 +169,13 @@ function openContract(row: McpVO) {
   contractMcpName.value = row.mcpName
   contractVisible.value = true
 }
+
+watch([() => auth.token, () => auth.loginGeneration, () => auth.permissions.join('\0')], () => {
+  detailRequestId += 1
+  isCopy.value = false
+  debugVisible.value = false
+  contractVisible.value = false
+}, { flush: 'sync' })
 
 onMounted(loadList)
 </script>
@@ -275,8 +262,8 @@ onMounted(loadList)
               ></el-button>
               <template #dropdown>
                 <el-dropdown-menu>
-                  <el-dropdown-item :disabled="testingId === row.id" @click="handleTest(row)">{{
-                    testingId === row.id ? '正在测试…' : '测试连通性'
+                  <el-dropdown-item :disabled="probe.isPending(row.id)" @click="handleTest(row)">{{
+                    probe.isPending(row.id) ? '正在测试…' : '测试连通性'
                   }}</el-dropdown-item>
                   <el-dropdown-item v-permission="'mcp:edit'" @click="openDebug(row)"
                     >调试工具</el-dropdown-item
@@ -290,6 +277,7 @@ onMounted(loadList)
                     v-permission="'mcp:delete'"
                     divided
                     class="danger-action"
+                    :disabled="deletion.isPending(row.id)"
                     @click="handleDelete(row)"
                     >删除服务</el-dropdown-item
                   >
@@ -315,7 +303,7 @@ onMounted(loadList)
       :title="dialogMode === 'edit' ? '编辑 MCP' : dialogMode === 'copy' ? '复制 MCP' : '新建 MCP'"
       width="520px"
     >
-      <el-form ref="formRef" :model="form" label-width="90px">
+      <el-form ref="formRef" :model="form" :disabled="submitting" label-width="90px">
         <el-form-item
           label="名称"
           prop="mcpName"
@@ -387,7 +375,7 @@ onMounted(loadList)
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button class="cw-final-action" type="primary" @click="handleSubmit">保存 MCP</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="submitting" @click="handleSubmit">保存 MCP</el-button>
       </template>
     </el-dialog>
 

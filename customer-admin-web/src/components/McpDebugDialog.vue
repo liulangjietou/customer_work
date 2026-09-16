@@ -1,10 +1,24 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { debugMcpCallTool, debugMcpTools } from '@/api/mcp'
+import { useAuthStore } from '@/store/auth'
+import { useAuthSubmissionScope } from '@/composables/useAuthSubmissionScope'
 import type { McpDebugCallResult, McpDebugToolVO } from '@/types/api'
 
 const props = defineProps<{ mcpId: number | null; mcpName: string }>()
 const visible = defineModel<boolean>({ default: false })
+const auth = useAuthStore()
+const captureSubmission = useAuthSubmissionScope()
+const canCall = computed(() => auth.hasPermission('mcp:edit'))
+let generation = 0
+
+/** 连接和调用的回调只属于当前服务、当前弹窗和发起身份。 */
+function captureDialog() {
+  const currentIdentity = captureSubmission()
+  const currentGeneration = generation
+  const id = props.mcpId
+  return () => currentIdentity() && currentGeneration === generation && visible.value && id === props.mcpId
+}
 
 const connecting = ref(false)
 const connected = ref(false)
@@ -37,7 +51,9 @@ function fieldOptions(schema: Record<string, unknown> | undefined): string[] | n
 }
 
 async function connect() {
-  if (!props.mcpId) return
+  if (!visible.value || !props.mcpId || connecting.value || calling.value || !auth.hasPermission('mcp:view')) return
+  const current = captureDialog()
+  const id = props.mcpId
   connecting.value = true
   connectError.value = ''
   connected.value = false
@@ -45,19 +61,22 @@ async function connect() {
   selectedToolName.value = ''
   result.value = null
   try {
-    tools.value = await debugMcpTools(props.mcpId)
+    const nextTools = await debugMcpTools(id)
+    if (!current()) return
+    tools.value = nextTools
     connected.value = true
     if (tools.value.length > 0) {
       selectTool(tools.value[0])
     }
   } catch (error) {
-    connectError.value = error instanceof Error ? error.message : String(error)
+    if (current()) connectError.value = error instanceof Error ? error.message : '连接失败，请重试'
   } finally {
-    connecting.value = false
+    if (current()) connecting.value = false
   }
 }
 
 function selectTool(tool: McpDebugToolVO) {
+  if (calling.value) return
   selectedToolName.value = tool.name
   result.value = null
   Object.keys(formValues).forEach((key) => delete formValues[key])
@@ -77,7 +96,10 @@ function selectTool(tool: McpDebugToolVO) {
 }
 
 async function callTool() {
-  if (!props.mcpId || !selectedTool.value) return
+  if (!visible.value || !props.mcpId || !selectedTool.value || calling.value || !canCall.value) return
+  const current = captureDialog()
+  const id = props.mcpId
+  const toolName = selectedTool.value.name
   const args: Record<string, unknown> = {}
   for (const [key, schema] of Object.entries(selectedTool.value.properties)) {
     const raw = formValues[key]
@@ -108,17 +130,19 @@ async function callTool() {
   result.value = null
   showRawBinaryOutput.value = false
   try {
-    result.value = await debugMcpCallTool(props.mcpId, selectedTool.value.name, args)
+    const nextResult = await debugMcpCallTool(id, toolName, args)
+    if (current()) result.value = nextResult
   } catch (error) {
+    if (!current()) return
     result.value = {
       success: false,
       output: null,
-      errorMessage: error instanceof Error ? error.message : String(error),
+      errorMessage: error instanceof Error ? error.message : '调用失败，请重试',
       images: [],
       outputLooksBinary: false,
     }
   } finally {
-    calling.value = false
+    if (current()) calling.value = false
   }
 }
 
@@ -134,11 +158,27 @@ const truncatedRawBinaryOutput = computed(() => {
   return `${text.slice(0, RAW_BINARY_OUTPUT_MAX_CHARS)}\n\n…（已截断，原文共 ${text.length} 字符）`
 })
 
-watch(visible, (val) => {
-  if (val) {
-    connect()
-  }
-})
+function reset() {
+  generation += 1
+  connecting.value = false
+  connected.value = false
+  connectError.value = ''
+  tools.value = []
+  selectedToolName.value = ''
+  calling.value = false
+  result.value = null
+  showRawBinaryOutput.value = false
+  Object.keys(formValues).forEach(key => delete formValues[key])
+}
+
+watch([visible, () => props.mcpId], () => {
+  reset()
+  if (visible.value) void connect()
+}, { flush: 'sync' })
+watch([() => auth.token, () => auth.loginGeneration, () => auth.permissions.join('\0')], () => {
+  visible.value = false
+  reset()
+}, { flush: 'sync' })
 </script>
 
 <template>
@@ -148,7 +188,7 @@ watch(visible, (val) => {
       <div class="tool-list-pane">
         <div class="pane-title">
           <span>工具列表</span>
-          <el-button link type="primary" :loading="connecting" @click="connect">
+          <el-button link type="primary" :loading="connecting" :disabled="calling" aria-label="重新连接 MCP" @click="connect">
             <el-icon><Refresh /></el-icon>
           </el-button>
         </div>
@@ -186,7 +226,7 @@ watch(visible, (val) => {
               <div v-if="selectedTool.description" class="tool-header-desc">{{ selectedTool.description }}</div>
             </div>
 
-            <el-form label-position="top" size="default">
+            <el-form label-position="top" size="default" :disabled="calling || !canCall">
               <template v-if="Object.keys(selectedTool.properties).length === 0">
                 <el-text type="info" size="small">该工具无需参数</el-text>
               </template>
@@ -224,7 +264,7 @@ watch(visible, (val) => {
               </el-form-item>
             </el-form>
 
-            <el-button type="primary" :loading="calling" style="margin: 8px 0 16px" @click="callTool">
+            <el-button type="primary" :loading="calling" :disabled="!canCall" style="margin: 8px 0 16px" @click="callTool">
               <el-icon style="margin-right: 4px"><VideoPlay /></el-icon>
               调用
             </el-button>
@@ -451,5 +491,23 @@ watch(visible, (val) => {
   color: var(--el-color-danger);
   padding: 0 16px;
   text-align: center;
+}
+/* 窄屏给参数表单完整宽度；工具列表保留独立滚动，避免挤成不可输入的窄栏。 */
+@media (max-width: 700px) {
+  .debug-body {
+    flex-direction: column;
+    gap: 12px;
+    height: auto;
+  }
+
+  .tool-list-pane {
+    flex: 0 0 140px;
+  }
+
+  .detail-pane {
+    flex: 0 0 320px;
+    width: 100%;
+    min-height: 0;
+  }
 }
 </style>

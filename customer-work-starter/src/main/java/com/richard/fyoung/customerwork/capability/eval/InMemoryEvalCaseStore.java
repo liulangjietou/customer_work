@@ -21,7 +21,7 @@ public class InMemoryEvalCaseStore implements EvalCaseStore {
     @Override
     public void create(PersistedEvalCase evalCase) {
         if (cases.putIfAbsent(key(evalCase.evalType(), evalCase.caseId()), evalCase) != null) {
-            throw new IllegalStateException("eval case id already exists: " + evalCase.caseId());
+            throw new EvalCaseConflictException("eval case id already exists: " + evalCase.caseId());
         }
     }
 

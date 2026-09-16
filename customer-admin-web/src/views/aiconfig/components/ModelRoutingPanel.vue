@@ -1,5 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import CrudLoadState from '@/components/CrudLoadState.vue'
+import { useAuthSubmissionScope } from '@/composables/useAuthSubmissionScope'
+import { useQueryState } from '@/composables/useQueryState'
+import { useRowMutation } from '@/composables/useRowMutation'
+import { useAuthStore } from '@/store/auth'
 import {
   activateModelRouteVersion,
   createModelRoutePolicy,
@@ -31,12 +36,23 @@ interface EditableRule {
   condition: ModelRouteCondition
 }
 
-const loading = ref(false)
+const auth = useAuthStore()
+const captureIdentity = useAuthSubmissionScope()
+const activation = useRowMutation('model:edit')
 const saving = ref(false)
-const policies = ref<ModelRoutePolicy[]>([])
-const deployments = ref<ModelVO[]>([])
+const validating = ref(false)
+const primary = useQueryState(async () => {
+  const [policies, deployments] = await Promise.all([
+    listModelRoutePolicies(), pageModels({ pageNum: 1, pageSize: 200 }),
+  ])
+  return { policies, deployments: deployments.list }
+}, () => ({ policies: [] as ModelRoutePolicy[], deployments: [] as ModelVO[] }))
+const { loading, error: loadError, loaded } = primary
+const policies = computed(() => primary.data.value.policies)
+const deployments = computed(() => primary.data.value.deployments)
 const selectedPolicy = ref<ModelRoutePolicy | null>(null)
-const versions = ref<ModelRouteVersion[]>([])
+const versionQuery = useQueryState(() => listModelRouteVersions(selectedPolicy.value!.id), () => [] as ModelRouteVersion[])
+const { data: versions, loading: versionsLoading, error: versionsError, loaded: versionsLoaded } = versionQuery
 const detailVisible = ref(false)
 const editorVisible = ref(false)
 const editorMode = ref<'create' | 'version'>('create')
@@ -45,6 +61,8 @@ const dryRunVisible = ref(false)
 const dryRunLoading = ref(false)
 const dryRunResult = ref<ModelRouteDryRunResult | null>(null)
 let nextRuleKey = 1
+let selectionGeneration = 0
+const editorPending = computed(() => saving.value || validating.value || versionsLoading.value)
 
 const draft = reactive({
   policyCode: '',
@@ -76,17 +94,39 @@ const activeCount = computed(() => policies.value.filter((policy) => policy.stat
 onMounted(() => void load())
 
 async function load() {
-  loading.value = true
-  try {
-    const [policyList, deploymentPage] = await Promise.all([
-      listModelRoutePolicies(),
-      pageModels({ pageNum: 1, pageSize: 200 }),
-    ])
-    policies.value = policyList
-    deployments.value = deploymentPage.list
-  } finally {
-    loading.value = false
-  }
+  if (auth.hasPermission('model:view')) await primary.load()
+}
+
+function invalidateSelection() {
+  selectionGeneration += 1
+  saving.value = validating.value = dryRunLoading.value = false
+  validation.value = null
+  dryRunResult.value = null
+  versionQuery.reset()
+}
+
+watch([detailVisible, editorVisible, dryRunVisible], (visible, previous) => {
+  if (visible.some((value, index) => !value && previous[index])) invalidateSelection()
+}, { flush: 'sync' })
+
+watch([() => auth.token, () => auth.loginGeneration, () => auth.permissions.join('\0')], () => {
+  detailVisible.value = editorVisible.value = dryRunVisible.value = false
+  invalidateSelection()
+  selectedPolicy.value = null
+  resetDraft()
+  void load()
+}, { flush: 'sync' })
+
+function selectPolicy(policy: ModelRoutePolicy | null) {
+  detailVisible.value = editorVisible.value = dryRunVisible.value = false
+  invalidateSelection()
+  selectedPolicy.value = policy
+}
+
+function captureSelection() {
+  const generation = selectionGeneration
+  const identity = captureIdentity()
+  return () => identity() && generation === selectionGeneration
 }
 
 function emptyCondition(): ModelRouteCondition {
@@ -129,39 +169,50 @@ function resetDraft() {
 }
 
 function openCreate() {
+  if (!auth.hasPermission('model:edit')) return
+  selectPolicy(null)
   editorMode.value = 'create'
-  selectedPolicy.value = null
   resetDraft()
   editorVisible.value = true
 }
 
 async function openDetail(policy: ModelRoutePolicy) {
-  selectedPolicy.value = policy
-  versions.value = await listModelRouteVersions(policy.id)
+  selectPolicy(policy)
   detailVisible.value = true
+  await loadVersions()
 }
 
 async function openNewVersion(policy: ModelRoutePolicy) {
-  selectedPolicy.value = policy
-  versions.value = await listModelRouteVersions(policy.id)
+  if (!auth.hasPermission('model:edit')) return
+  selectPolicy(policy)
   editorMode.value = 'version'
   draft.policyCode = policy.policyCode
   draft.policyName = policy.policyName
   draft.description = policy.description ?? ''
   draft.changeNote = ''
-  const base = versions.value[0] ?? policy.currentVersion
-  draft.rules = base?.rules.map((rule) => editableRule(rule.purpose, rule.priority, rule))
-    ?? [editableRule('DEFAULT', 100), editableRule('FALLBACK', 900)]
-  validation.value = null
+  draft.rules = []
   editorVisible.value = true
+  await loadVersions()
+}
+
+async function loadVersions() {
+  if (!selectedPolicy.value || !auth.hasPermission('model:view')) return
+  const current = captureSelection()
+  const result = await versionQuery.load()
+  if (!result || !current() || !editorVisible.value) return
+  const base = result[0] ?? selectedPolicy.value?.currentVersion
+  draft.rules = base?.rules.map(rule => editableRule(rule.purpose, rule.priority, rule))
+    ?? [editableRule('DEFAULT', 100), editableRule('FALLBACK', 900)]
 }
 
 function addRule() {
+  if (editorPending.value) return
   const priority = Math.max(0, ...draft.rules.map((rule) => rule.priority)) + 10
   draft.rules.push(editableRule('ECONOMY', priority))
 }
 
 function removeRule(index: number) {
+  if (editorPending.value) return
   draft.rules.splice(index, 1)
   validation.value = null
 }
@@ -181,14 +232,23 @@ function requestRules(): ModelRouteRuleRequest[] {
 }
 
 async function validateDraft() {
-  if (editorMode.value !== 'version' || !selectedPolicy.value) {
-    validation.value = localValidation()
-    return
+  if (editorPending.value || !editorVisible.value || !auth.hasPermission('model:edit')) return
+  const current = captureSelection()
+  const id = editorMode.value === 'version' ? selectedPolicy.value?.id : undefined
+  const payload = { changeNote: draft.changeNote, rules: requestRules() }
+  validating.value = true
+  try {
+    const result = await validateRules(id, payload)
+    if (current()) validation.value = result
+  } catch {
+    // 保留输入；请求层反馈校验服务故障。
+  } finally {
+    if (current()) validating.value = false
   }
-  validation.value = await validateModelRouteVersion(selectedPolicy.value.id, {
-    changeNote: draft.changeNote,
-    rules: requestRules(),
-  })
+}
+
+function validateRules(id: number | undefined, payload: { changeNote: string; rules: ModelRouteRuleRequest[] }) {
+  return id ? validateModelRouteVersion(id, payload) : Promise.resolve(localValidation())
 }
 
 function localValidation(): ModelRouteValidation {
@@ -204,59 +264,69 @@ function localValidation(): ModelRouteValidation {
 }
 
 async function saveDraft() {
+  if (editorPending.value || !editorVisible.value || !auth.hasPermission('model:edit')) return
+  if (editorMode.value === 'version' && !versionsLoaded.value) return
   if (!draft.rules.length) {
     ElMessage.warning('至少配置一条路由规则')
     return
   }
-  await validateDraft()
-  if (!validation.value?.valid) {
-    ElMessage.error(validation.value?.conflicts[0]?.message ?? '规则校验未通过')
-    return
+  const current = captureSelection()
+  const mode = editorMode.value
+  const id = selectedPolicy.value?.id
+  const payload = {
+    policyCode: draft.policyCode, policyName: draft.policyName, description: draft.description,
+    changeNote: draft.changeNote, rules: requestRules(),
   }
   saving.value = true
   try {
-    if (editorMode.value === 'create') {
-      await createModelRoutePolicy({
-        policyCode: draft.policyCode,
-        policyName: draft.policyName,
-        description: draft.description,
-        changeNote: draft.changeNote,
-        rules: requestRules(),
-      })
-      ElMessage.success('路由策略与 v1 草稿已创建')
-    } else if (selectedPolicy.value) {
-      await createModelRouteVersion(selectedPolicy.value.id, {
-        changeNote: draft.changeNote,
-        rules: requestRules(),
-      })
-      ElMessage.success('新的不可变版本已创建')
+    const result = await validateRules(mode === 'version' ? id : undefined, payload)
+    if (!current()) return
+    validation.value = result
+    if (!result.valid) {
+      ElMessage.error(result.conflicts[0]?.message ?? '规则校验未通过')
+      return
     }
-    editorVisible.value = false
+    if (mode === 'create') await createModelRoutePolicy(payload)
+    else if (id) await createModelRouteVersion(id, { changeNote: payload.changeNote, rules: payload.rules })
+    else return
+    if (!current()) return
+    ElMessage.success(mode === 'create' ? '路由策略与 v1 草稿已创建' : '新的不可变版本已创建')
     await load()
-    if (selectedPolicy.value) {
-      const refreshed = policies.value.find((item) => item.id === selectedPolicy.value?.id)
-      if (refreshed) await openDetail(refreshed)
-    }
+    if (!current()) return
+    const refreshed = policies.value.find(item => item.id === id)
+    editorVisible.value = false
+    if (refreshed) await openDetail(refreshed)
+  } catch {
+    // 预检与提交共用一次输入快照；失败保留草稿，旧回调不能提交后续策略。
   } finally {
-    saving.value = false
+    if (current()) saving.value = false
   }
 }
 
 async function activate(policy: ModelRoutePolicy, version: ModelRouteVersion) {
-  await ElMessageBox.confirm(
-    `激活 v${version.versionNo} 前，后端会逐个校验部署 ACTIVE 状态与未过期认证。确认继续？`,
-    '激活路由版本',
-    { type: 'warning' },
-  )
-  await activateModelRouteVersion(policy.id, version.id)
-  ElMessage.success(`v${version.versionNo} 已激活`)
-  await load()
-  const refreshed = policies.value.find((item) => item.id === policy.id)
-  if (refreshed) await openDetail(refreshed)
+  const current = captureSelection()
+  let written = false
+  await activation.run(version.id, async isCurrent => {
+    await ElMessageBox.confirm(
+      `激活 v${version.versionNo} 前，后端会逐个校验部署 ACTIVE 状态与未过期认证。确认继续？`,
+      '激活路由版本', { type: 'warning' },
+    )
+    if (!isCurrent() || !current() || !detailVisible.value) return
+    await activateModelRouteVersion(policy.id, version.id)
+    written = true
+  }, async () => {
+    if (!written || !current()) return
+    ElMessage.success(`v${version.versionNo} 已激活`)
+    await load()
+    if (!current()) return
+    const refreshed = policies.value.find(item => item.id === policy.id)
+    if (refreshed) selectedPolicy.value = refreshed
+    await loadVersions()
+  })
 }
 
 function openDryRun(policy: ModelRoutePolicy) {
-  selectedPolicy.value = policy
+  selectPolicy(policy)
   dryRunResult.value = null
   Object.assign(dryRun, {
     agentId: null,
@@ -271,12 +341,18 @@ function openDryRun(policy: ModelRoutePolicy) {
 }
 
 async function executeDryRun() {
-  if (!selectedPolicy.value) return
+  if (!selectedPolicy.value || !dryRunVisible.value || dryRunLoading.value || !auth.hasPermission('model:view')) return
+  const current = captureSelection()
+  const id = selectedPolicy.value.id
+  const payload = { ...dryRun }
   dryRunLoading.value = true
   try {
-    dryRunResult.value = await dryRunModelRoutePolicy(selectedPolicy.value.id, { ...dryRun })
+    const result = await dryRunModelRoutePolicy(id, payload)
+    if (current()) dryRunResult.value = result
+  } catch {
+    // 失败保留查询输入；结果始终属于打开时选定的策略。
   } finally {
-    dryRunLoading.value = false
+    if (current()) dryRunLoading.value = false
   }
 }
 
@@ -306,12 +382,13 @@ function formatTime(value: string | null | undefined) {
           <p>规则只引用部署 ID；版本内容只增不改，并在激活前校验所有目标部署的上线认证。</p>
         </div>
         <div class="header-actions">
-          <span>{{ activeCount }} 个生效策略 / {{ policies.length }} 个策略</span>
+          <span>{{ loaded ? activeCount : '—' }} 个生效策略 / {{ loaded ? policies.length : '—' }} 个策略</span>
           <el-button v-permission="'model:edit'" class="cw-final-action" type="primary" @click="openCreate">新建策略</el-button>
         </div>
       </div>
     </template>
 
+    <CrudLoadState :error="loadError" :has-stale-data="loaded" :loading="loading" @retry="load" />
     <el-alert
       title="ACTIVE 策略只有绑定到智能体后才影响流量；激活新版本会清理 Admin 实例缓存并经可靠任务重发 starter 运行时配置。"
       type="info"
@@ -351,7 +428,8 @@ function formatTime(value: string | null | undefined) {
           <el-tag v-if="selectedPolicy" :type="policyTagType(selectedPolicy.status)">{{ selectedPolicy.status }}</el-tag>
         </div>
       </template>
-      <div class="version-list">
+      <CrudLoadState :error="versionsError" :has-stale-data="versionsLoaded" :loading="versionsLoading" @retry="loadVersions" />
+      <div v-loading="versionsLoading" class="version-list">
         <section v-for="version in versions" :key="version.id" class="version-card">
           <div class="version-heading">
             <div>
@@ -364,6 +442,7 @@ function formatTime(value: string | null | undefined) {
               v-permission="'model:edit'"
               type="primary"
               plain
+              :loading="activation.isPending(version.id)"
               @click="activate(selectedPolicy, version)"
             >激活版本</el-button>
           </div>
@@ -387,7 +466,8 @@ function formatTime(value: string | null | undefined) {
     </el-drawer>
 
     <el-dialog v-model="editorVisible" :title="editorMode === 'create' ? '新建路由策略' : `创建 ${selectedPolicy?.policyName} 的新版本`" width="min(980px, 96vw)" destroy-on-close>
-      <el-form :model="draft" label-position="top">
+      <CrudLoadState :error="versionsError" :has-stale-data="versionsLoaded" :loading="versionsLoading" @retry="loadVersions" />
+      <el-form :model="draft" label-position="top" :disabled="editorPending || !auth.hasPermission('model:edit')">
         <div v-if="editorMode === 'create'" class="policy-form-grid">
           <el-form-item label="策略编码" required><el-input v-model="draft.policyCode" placeholder="如 customer-service-main" /></el-form-item>
           <el-form-item label="策略名称" required><el-input v-model="draft.policyName" placeholder="如 客服主路由" /></el-form-item>
@@ -447,13 +527,13 @@ function formatTime(value: string | null | undefined) {
       </el-form>
       <template #footer>
         <el-button @click="editorVisible = false">取消</el-button>
-        <el-button @click="validateDraft">校验冲突</el-button>
-        <el-button class="cw-final-action" type="primary" :loading="saving" @click="saveDraft">{{ editorMode === 'create' ? '创建 v1 草稿' : '创建不可变版本' }}</el-button>
+        <el-button :loading="validating" :disabled="saving || versionsLoading" @click="validateDraft">校验冲突</el-button>
+        <el-button class="cw-final-action" type="primary" :loading="saving" :disabled="validating || (editorMode === 'version' && !versionsLoaded)" @click="saveDraft">{{ editorMode === 'create' ? '创建 v1 草稿' : '创建不可变版本' }}</el-button>
       </template>
     </el-dialog>
 
     <el-dialog v-model="dryRunVisible" title="路由 Dry-run" width="min(860px, 94vw)" destroy-on-close>
-      <el-form :model="dryRun" label-position="top">
+      <el-form :model="dryRun" label-position="top" :disabled="dryRunLoading">
         <div class="policy-form-grid">
           <el-form-item label="Agent ID"><el-input-number v-model="dryRun.agentId" :min="1" style="width: 100%" /></el-form-item>
           <el-form-item label="渠道编码"><el-input v-model="dryRun.channelCode" placeholder="如 wechat" /></el-form-item>

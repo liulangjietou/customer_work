@@ -1,5 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import CrudLoadState from '@/components/CrudLoadState.vue'
+import { useCrudForm } from '@/composables/useCrudForm'
+import { useQueryState } from '@/composables/useQueryState'
+import { useRowMutation } from '@/composables/useRowMutation'
+import { useAuthStore } from '@/store/auth'
 import { pageAgents } from '@/api/agent'
 import { listDatasetVersions, type EvalDatasetRelease } from '@/api/eval'
 import { pageModels } from '@/api/model'
@@ -21,33 +26,85 @@ import {
 } from '@/api/modelExperiment'
 import type { AgentVO, ModelVO } from '@/types/api'
 
-const loading = ref(false)
-const saving = ref(false)
-const optionLoading = ref(false)
-const experiments = ref<ModelExperiment[]>([])
-const agents = ref<AgentVO[]>([])
-const deployments = ref<ModelVO[]>([])
-const createVisible = ref(false)
+const auth = useAuthStore()
+const filter = reactive<{ agentId?: number; status?: ModelExperimentStatus }>({})
+const primary = useQueryState(() => listModelExperiments({ ...filter }), () => [] as ModelExperiment[])
+const { data: experiments, loading, error: loadError, loaded } = primary
+const optionsAllowed = computed(() => ['agent:view', 'model:view', 'eval:view'].every(permission => auth.hasPermission(permission)))
+const options = useQueryState(async () => {
+  const [agentPage, modelPage, releases] = await Promise.all([
+    pageAgents({ pageNum: 1, pageSize: 200 }), pageModels({ pageNum: 1, pageSize: 200 }),
+    listDatasetVersions('QUALITY'),
+  ])
+  return { agents: agentPage.list, deployments: modelPage.list,
+    datasetReleases: releases.filter(item => item.status === 'APPROVED') }
+}, () => ({ agents: [] as AgentVO[], deployments: [] as ModelVO[], datasetReleases: [] as EvalDatasetRelease[] }))
+const { loading: optionLoading, error: optionError, loaded: optionsLoaded } = options
+const agents = computed(() => options.data.value.agents)
+const deployments = computed(() => options.data.value.deployments)
+const datasetReleases = computed(() => options.data.value.datasetReleases)
 const detailVisible = ref(false)
 const selected = ref<ModelExperiment | null>(null)
-const metrics = ref<ModelExperimentMetrics | null>(null)
-const events = ref<ModelExperimentEvent[]>([])
-const armEvaluations = ref<ModelExperimentArmEvaluation[]>([])
-const datasetReleases = ref<EvalDatasetRelease[]>([])
+const details = useQueryState(async () => {
+  const id = selected.value!.id
+  const [metrics, events, armEvaluations] = await Promise.all([
+    getModelExperimentMetrics(id), listModelExperimentEvents(id), listModelExperimentArmEvaluations(id),
+  ])
+  return { metrics, events, armEvaluations }
+}, () => ({ metrics: null as ModelExperimentMetrics | null, events: [] as ModelExperimentEvent[],
+  armEvaluations: [] as ModelExperimentArmEvaluation[] }))
+const { loading: detailLoading, error: detailError, loaded: detailLoaded } = details
+const metrics = computed(() => details.data.value.metrics)
+const events = computed(() => details.data.value.events)
+const armEvaluations = computed(() => details.data.value.armEvaluations)
+const startMutation = useRowMutation('model-experiment:start')
 
-const filter = reactive<{ agentId?: number; status?: ModelExperimentStatus }>({})
-const form = reactive<ModelExperimentCreateRequest>({
-  experimentName: '',
-  agentId: 0,
-  controlDeploymentId: 0,
-  treatmentDeploymentId: 0,
-  treatmentBps: 1000,
-  minSample: 1000,
-  maxErrorRate: 0.05,
-  maxP95LatencyMs: 3000,
-  expiresAt: futureDateTimeValue(7),
-  datasetReleaseId: '',
+const { dialogVisible: createVisible, submitting: saving, form, openCreate: openCreateForm,
+  handleSubmit: createExperiment } = useCrudForm<ModelExperiment, ModelExperimentCreateRequest>({
+  initForm: () => ({
+    experimentName: '', agentId: 0, controlDeploymentId: 0, treatmentDeploymentId: 0,
+    treatmentBps: 1000, minSample: 1000, maxErrorRate: 0.05, maxP95LatencyMs: 3000,
+    expiresAt: futureDateTimeValue(7), datasetReleaseId: '',
+  }),
+  create: value => createModelExperiment({ ...value, experimentName: value.experimentName.trim() }),
+  beforeSubmit: (_, value) => {
+    if (!auth.hasPermission('model-experiment:create') || !optionsAllowed.value) return false
+    if (!value.experimentName.trim() || !value.agentId || !value.controlDeploymentId
+      || !value.treatmentDeploymentId || !value.datasetReleaseId) {
+      ElMessage.warning('请完整填写实验名称、智能体、双臂部署和审核数据集版本')
+      return false
+    }
+    if (value.controlDeploymentId === value.treatmentDeploymentId) {
+      ElMessage.warning('对照组和实验组必须选择不同部署')
+      return false
+    }
+    return true
+  },
+  messages: { created: '实验草稿已创建；revision 与分桶 salt 已固化' },
+  onSaved: reloadExperiments,
 })
+
+const { dialogVisible: stopVisible, submitting: stopping, form: stopForm,
+  openEdit: openStopForm, handleSubmit: submitStop } = useCrudForm<ModelExperiment, { reason: string }>({
+  initForm: () => ({ reason: '' }),
+  update: (id, value) => stopModelExperiment(id, value.reason.trim()),
+  beforeSubmit: (_, value) => {
+    if (!auth.hasPermission('model-experiment:stop')) return false
+    if (!value.reason.trim()) { ElMessage.warning('请输入停止原因'); return false }
+    return true
+  },
+  messages: { updated: '撤流任务已入队，运行时 APPLIED 后才会显示 INACTIVE' },
+  onSaved: reloadExperiments,
+})
+
+watch(detailVisible, visible => { if (!visible) { details.reset(); selected.value = null } }, { flush: 'sync' })
+watch([() => auth.token, () => auth.loginGeneration, () => auth.permissions.join('\0')], () => {
+  detailVisible.value = false
+  selected.value = null
+  delete filter.agentId
+  delete filter.status
+  void reloadExperiments()
+}, { flush: 'sync' })
 
 const runningCount = computed(() => experiments.value.filter((item) => item.status === 'RUNNING').length)
 const activeCount = computed(() => experiments.value.filter((item) => item.effectiveState === 'ACTIVE').length)
@@ -58,99 +115,53 @@ const filterAgents = computed(() => [...new Set(experiments.value.map((item) => 
 onMounted(() => void reloadExperiments())
 
 async function reloadExperiments() {
-  loading.value = true
-  try {
-    experiments.value = await listModelExperiments(filter)
-  } finally {
-    loading.value = false
-  }
+  if (auth.hasPermission('model-experiment:view')) await primary.load()
 }
 
 async function openCreate() {
-  optionLoading.value = true
-  try {
-    const [agentPage, modelPage, releases] = await Promise.all([
-      pageAgents({ pageNum: 1, pageSize: 200 }),
-      pageModels({ pageNum: 1, pageSize: 200 }),
-      listDatasetVersions('QUALITY'),
-    ])
-    agents.value = agentPage.list
-    deployments.value = modelPage.list
-    datasetReleases.value = releases.filter((item) => item.status === 'APPROVED')
-  } finally {
-    optionLoading.value = false
-  }
-  const firstAgent = agents.value.find((item) => item.status === 1)
-  const activeDeployments = deployments.value.filter((item) => item.status === 1 && item.lifecycleStatus === 'ACTIVE')
+  if (optionLoading.value || !auth.hasPermission('model-experiment:create') || !optionsAllowed.value) return
+  const result = await options.load()
+  if (!result) return
+  const firstAgent = result.agents.find(item => item.status === 1)
+  const activeDeployments = result.deployments.filter(item => item.status === 1 && item.lifecycleStatus === 'ACTIVE')
+  openCreateForm()
   Object.assign(form, {
-    experimentName: '',
-    agentId: firstAgent?.id ?? 0,
-    controlDeploymentId: activeDeployments[0]?.id ?? 0,
+    agentId: firstAgent?.id ?? 0, controlDeploymentId: activeDeployments[0]?.id ?? 0,
     treatmentDeploymentId: activeDeployments[1]?.id ?? 0,
-    treatmentBps: 1000,
-    minSample: 1000,
-    maxErrorRate: 0.05,
-    maxP95LatencyMs: 3000,
-    expiresAt: futureDateTimeValue(7),
-    datasetReleaseId: datasetReleases.value[0]?.releaseId ?? '',
+    datasetReleaseId: result.datasetReleases[0]?.releaseId ?? '',
   })
-  createVisible.value = true
-}
-
-async function createExperiment() {
-  if (!form.experimentName.trim() || !form.agentId
-    || !form.controlDeploymentId || !form.treatmentDeploymentId || !form.datasetReleaseId) {
-    ElMessage.warning('请完整填写实验名称、智能体、双臂部署和审核数据集版本')
-    return
-  }
-  if (form.controlDeploymentId === form.treatmentDeploymentId) {
-    ElMessage.warning('对照组和实验组必须选择不同部署')
-    return
-  }
-  saving.value = true
-  try {
-    await createModelExperiment({ ...form, experimentName: form.experimentName.trim() })
-    ElMessage.success('实验草稿已创建；revision 与分桶 salt 已固化')
-    createVisible.value = false
-    await reloadExperiments()
-  } finally {
-    saving.value = false
-  }
 }
 
 async function startExperiment(row: ModelExperiment) {
-  await ElMessageBox.confirm(
-    '后端会先用审核数据集分别评测 control/treatment；两臂均达到平均分 3.0、通过率 80% 且无错误后，才进入运行时激活。确认启动？',
-    '启动实验',
-    { type: 'warning' },
-  )
-  await startModelExperiment(row.id)
-  ElMessage.success('激活任务已入队，运行时 APPLIED 后才会显示 ACTIVE')
-  await reloadExperiments()
+  let started = false
+  await startMutation.run(row.id, async isCurrent => {
+    await ElMessageBox.confirm(
+      '后端会先用审核数据集分别评测 control/treatment；两臂均达到平均分 3.0、通过率 80% 且无错误后，才进入运行时激活。确认启动？',
+      '启动实验', { type: 'warning' },
+    )
+    if (!isCurrent()) return
+    await startModelExperiment(row.id)
+    started = true
+  }, async () => {
+    if (!started) return
+    ElMessage.success('激活任务已入队，运行时 APPLIED 后才会显示 ACTIVE')
+    await reloadExperiments()
+  })
 }
 
-async function stopExperiment(row: ModelExperiment) {
-  const { value: reason } = await ElMessageBox.prompt(
-    '停止原因会写入追加式事件，不能为空。',
-    '停止实验',
-    { inputType: 'textarea', inputValidator: (value) => !!value?.trim() || '请输入停止原因' },
-  )
-  await stopModelExperiment(row.id, reason.trim())
-  ElMessage.success('撤流任务已入队，运行时 APPLIED 后才会显示 INACTIVE')
-  await reloadExperiments()
+function stopExperiment(row: ModelExperiment) {
+  if (auth.hasPermission('model-experiment:stop')) openStopForm(row)
 }
 
 async function inspectExperiment(row: ModelExperiment) {
+  details.reset()
   selected.value = row
   detailVisible.value = true
-  metrics.value = null
-  events.value = []
-  armEvaluations.value = []
-  ;[metrics.value, events.value, armEvaluations.value] = await Promise.all([
-    getModelExperimentMetrics(row.id),
-    listModelExperimentEvents(row.id),
-    listModelExperimentArmEvaluations(row.id),
-  ])
+  await loadDetails()
+}
+
+async function loadDetails() {
+  if (detailVisible.value && selected.value && auth.hasPermission('model-experiment:view')) await details.load()
 }
 
 function experimentStatusType(status: ModelExperimentStatus) {
@@ -214,12 +225,16 @@ function futureDateTimeValue(days: number) {
         <div>
           <p class="eyebrow">ONLINE EXPERIMENT CONTROL</p>
           <h2>模型在线实验</h2>
-          <span>{{ experiments.length }} 个定义 · {{ runningCount }} 个期望 RUNNING · {{ activeCount }} 个运行时 ACTIVE</span>
+          <span>{{ loaded ? experiments.length : '—' }} 个定义 · {{ loaded ? runningCount : '—' }} 个期望 RUNNING · {{ loaded ? activeCount : '—' }} 个运行时 ACTIVE</span>
         </div>
-        <el-button v-permission="'model-experiment:create'" class="cw-final-action" type="primary" :loading="optionLoading" @click="openCreate">新建双臂实验</el-button>
+        <el-button v-permission="'model-experiment:create'" class="cw-final-action" type="primary" :loading="optionLoading" :disabled="!optionsAllowed" @click="openCreate">新建双臂实验</el-button>
       </div>
     </template>
 
+    <CrudLoadState :error="loadError" :has-stale-data="loaded" :loading="loading" @retry="reloadExperiments" />
+    <CrudLoadState :error="optionError" :has-stale-data="optionsLoaded" :loading="optionLoading" @retry="openCreate" />
+    <el-alert v-if="auth.hasPermission('model-experiment:create') && !optionsAllowed"
+      title="创建实验需要智能体、模型和评测数据的查看权限，请联系管理员配置。" type="info" :closable="false" />
     <el-alert
       title="生命周期是期望状态，生效状态以可靠发布任务与实例 ACK 为准"
       description="RUNNING 不等于已经承接流量；只有 ACTIVATE 任务 APPLIED 才显示 ACTIVE。停止、护栏触发或到期后，也只有 DEACTIVATE 任务 APPLIED 才显示 INACTIVE。"
@@ -291,14 +306,14 @@ function futureDateTimeValue(days: number) {
       <el-table-column label="操作" width="210" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="inspectExperiment(row)">指标与事件</el-button>
-          <el-button v-if="row.status === 'DRAFT'" v-permission="'model-experiment:start'" link type="success" @click="startExperiment(row)">启动</el-button>
+          <el-button v-if="row.status === 'DRAFT'" v-permission="'model-experiment:start'" link type="success" :loading="startMutation.isPending(row.id)" @click="startExperiment(row)">启动</el-button>
           <el-button v-if="row.status === 'RUNNING'" v-permission="'model-experiment:stop'" link type="danger" @click="stopExperiment(row)">停止</el-button>
         </template>
       </el-table-column>
     </el-table>
 
     <el-dialog v-model="createVisible" title="新建不可变双臂实验" width="min(720px, 94vw)" destroy-on-close>
-      <el-form :model="form" label-position="top">
+      <el-form :model="form" label-position="top" :disabled="saving">
         <div class="form-grid">
           <el-form-item label="实验名称" class="full-row"><el-input v-model="form.experimentName" maxlength="128" show-word-limit /></el-form-item>
           <el-form-item label="智能体">
@@ -341,7 +356,20 @@ function futureDateTimeValue(days: number) {
       </template>
     </el-dialog>
 
+    <el-dialog v-model="stopVisible" title="停止实验" width="min(520px, 94vw)" destroy-on-close>
+      <p>停止原因会写入追加式事件，不能为空。</p>
+      <el-form label-position="top" :disabled="stopping">
+        <el-form-item label="停止原因"><el-input v-model="stopForm.reason" type="textarea" :rows="3" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="stopVisible = false">取消</el-button>
+        <el-button type="primary" :loading="stopping" @click="submitStop">确定</el-button>
+      </template>
+    </el-dialog>
+
     <el-drawer v-model="detailVisible" title="实验指标与事件" size="min(620px, 94vw)">
+      <CrudLoadState :error="detailError" :has-stale-data="detailLoaded" :loading="detailLoading" @retry="loadDetails" />
+      <div v-if="detailLoading" role="status">正在加载指标与事件…</div>
       <template v-if="selected">
         <el-descriptions :column="1" border>
           <el-descriptions-item label="实验">{{ selected.experimentName }} · r{{ selected.revision }}</el-descriptions-item>

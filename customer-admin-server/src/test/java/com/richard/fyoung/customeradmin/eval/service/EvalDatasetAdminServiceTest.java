@@ -7,6 +7,7 @@ import com.richard.fyoung.customeradmin.eval.config.EvalGatewayProvider;
 import com.richard.fyoung.customeradmin.eval.dto.EvalCaseSaveRequest;
 import com.richard.fyoung.customeradmin.eval.dto.EvalDatasetDiffVO;
 import com.richard.fyoung.customeradmin.eval.dto.EvalDatasetImportRequest;
+import com.richard.fyoung.customerwork.capability.eval.EvalCaseStore;
 import com.richard.fyoung.customerwork.capability.eval.EvalDatasetRelease;
 import com.richard.fyoung.customerwork.capability.eval.EvalDatasetReviewStatus;
 import com.richard.fyoung.customerwork.capability.eval.EvalType;
@@ -19,10 +20,13 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
 
 class EvalDatasetAdminServiceTest {
 
@@ -35,6 +39,20 @@ class EvalDatasetAdminServiceTest {
             new InMemoryEvalDatasetSnapshotStore(), new InMemoryEvalDatasetReleaseStore());
         when(provider.dataset()).thenReturn(gateway);
         service = new EvalDatasetAdminService(provider, new ObjectMapper());
+    }
+
+    @Test
+    void creationStorageFailureMustNotBeReportedAsDuplicate() {
+        EvalCaseStore store = mock(EvalCaseStore.class);
+        when(store.findByType(EvalType.QUALITY)).thenReturn(List.of());
+        var failure = new IllegalStateException("acceptance storage unavailable");
+        doThrow(failure).when(store).create(any());
+        EvalGatewayProvider provider = mock(EvalGatewayProvider.class);
+        when(provider.dataset()).thenReturn(new EvalGateway(null, store, null, null));
+        var target = new EvalDatasetAdminService(provider, new ObjectMapper());
+
+        assertSame(failure, assertThrows(IllegalStateException.class,
+            () -> target.createCase(EvalType.QUALITY, request("storage-fault-case", "input", "expected"))));
     }
 
     @Test

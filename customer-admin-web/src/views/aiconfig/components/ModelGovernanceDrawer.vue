@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import CrudLoadState from '@/components/CrudLoadState.vue'
+import { useAuthSubmissionScope } from '@/composables/useAuthSubmissionScope'
+import { useAuthStore } from '@/store/auth'
 import {
   getModel,
   getModelHealth,
@@ -32,6 +35,14 @@ const drawerVisible = computed({
   set: (value: boolean) => emit('update:modelValue', value),
 })
 const loading = ref(false)
+const loadError = ref<unknown>(null)
+const impactError = ref<unknown>(null)
+const impactLoading = ref(false)
+const auth = useAuthStore()
+const captureIdentity = useAuthSubmissionScope()
+let generation = 0
+let readId = 0
+let impactReadId = 0
 const probing = ref(false)
 const rotating = ref(false)
 const overriding = ref(false)
@@ -85,22 +96,41 @@ const rail = computed(() => {
 })
 
 watch(
-  [() => props.modelValue, () => props.modelId],
-  ([visible, id]) => {
-    if (visible && id) {
-      void loadAll(id)
-    }
-    if (!visible) {
-      rotation.value = { secretValue: '', expiresAt: null }
-      healthOverride.value = { mode: 'FORCE_UNHEALTHY', reason: '', expiresAt: null }
-      activeTab.value = 'overview'
-    }
+  [() => props.modelValue, () => props.modelId, () => auth.token,
+    () => auth.loginGeneration, () => auth.permissions.join('\0')],
+  () => {
+    generation += 1
+    readId += 1
+    impactReadId += 1
+    detail.value = null
+    health.value = null
+    events.value = []
+    impact.value = null
+    loadError.value = null
+    impactError.value = null
+    loading.value = probing.value = rotating.value = overriding.value = impactLoading.value = false
+    rotation.value = { secretValue: '', expiresAt: null }
+    healthOverride.value = { mode: 'FORCE_UNHEALTHY', reason: '', expiresAt: null }
+    activeTab.value = 'overview'
+    impactAction.value = 'DELETE'
+    if (props.modelValue && props.modelId) void loadAll()
   },
-  { immediate: true },
+  { immediate: true, flush: 'sync' },
 )
 
+/** 查询和写操作共同绑定抽屉代次，关闭或切换部署会使旧回调失效。 */
+function captureDrawer() {
+  const currentGeneration = generation
+  const id = props.modelId
+  const identity = captureIdentity()
+  return () => identity() && generation === currentGeneration && props.modelValue && props.modelId === id
+}
+
 async function loadAll(id = props.modelId) {
-  if (!id) return
+  if (!id || !props.modelValue || !auth.hasPermission('model:view')) return
+  const current = captureDrawer()
+  const request = ++readId
+  const impactRequest = ++impactReadId
   loading.value = true
   try {
     const [model, snapshot, history, impactResult] = await Promise.all([
@@ -109,43 +139,68 @@ async function loadAll(id = props.modelId) {
       listModelHealthEvents(id),
       getModelImpact(id, impactAction.value),
     ])
+    if (!current() || request !== readId) return
     detail.value = model
     health.value = snapshot
     events.value = history
-    impact.value = impactResult
+    if (impactRequest === impactReadId) {
+      impact.value = impactResult
+      impactError.value = null
+    }
+    loadError.value = null
+  } catch (error) {
+    if (current() && request === readId) loadError.value = error
   } finally {
-    loading.value = false
+    if (current() && request === readId) loading.value = false
   }
 }
 
 async function refreshImpact() {
-  if (!props.modelId) return
-  impact.value = await getModelImpact(props.modelId, impactAction.value)
+  if (!props.modelId || !auth.hasPermission('model:view')) return
+  const current = captureDrawer()
+  const request = ++impactReadId
+  impactLoading.value = true
+  try {
+    const result = await getModelImpact(props.modelId, impactAction.value)
+    if (!current() || request !== impactReadId) return
+    impact.value = result
+    impactError.value = null
+  } catch (error) {
+    if (current() && request === impactReadId) impactError.value = error
+  } finally {
+    if (current() && request === impactReadId) impactLoading.value = false
+  }
 }
 
 async function handleCertificationUpdated() {
+  const current = captureDrawer()
   await loadAll()
-  emit('refreshed')
+  if (current()) emit('refreshed')
 }
 
 async function probe() {
-  if (!props.modelId) return
+  if (!props.modelId || probing.value || !auth.hasPermission('model:health-test')) return
+  const current = captureDrawer()
   probing.value = true
   try {
     const result = await runModelHealthCheck(props.modelId)
+    if (!current()) return
     if (result.testStatus === 1) {
       ElMessage.success(`健康探测通过 · ${result.latencyMs ?? 0} ms`)
     } else {
       ElMessage.error(result.message || '健康探测失败')
     }
     await loadAll()
-    emit('refreshed')
+    if (current()) emit('refreshed')
+  } catch {
+    // 请求层已提示失败，当前抽屉允许重试。
   } finally {
-    probing.value = false
+    if (current()) probing.value = false
   }
 }
 
 async function applyHealthOverride() {
+  if (overriding.value || !auth.hasPermission('model:health-override')) return
   if (!props.modelId || !healthOverride.value.reason.trim()) {
     ElMessage.warning('请填写人工覆盖原因')
     return
@@ -154,28 +209,31 @@ async function applyHealthOverride() {
     ElMessage.warning('请设置覆盖到期时间')
     return
   }
-  await ElMessageBox.confirm(
-    `确认将有效路由状态设置为${healthOverride.value.mode === 'FORCE_HEALTHY' ? '强制健康' : '强制不可用'}？到期后会自动恢复状态机判断。`,
-    '模型健康路由覆盖',
-    { type: 'warning' },
-  )
+  const id = props.modelId
+  const payload = { ...healthOverride.value, reason: healthOverride.value.reason.trim() }
+  const current = captureDrawer()
   overriding.value = true
   try {
-    await updateModelHealthOverride(props.modelId, {
-      mode: healthOverride.value.mode,
-      reason: healthOverride.value.reason.trim(),
-      expiresAt: healthOverride.value.expiresAt,
-    })
+    await ElMessageBox.confirm(
+      `确认将有效路由状态设置为${payload.mode === 'FORCE_HEALTHY' ? '强制健康' : '强制不可用'}？到期后会自动恢复状态机判断。`,
+      '模型健康路由覆盖', { type: 'warning' },
+    )
+    if (!current()) return
+    await updateModelHealthOverride(id, payload)
+    if (!current()) return
     ElMessage.success('人工健康路由覆盖已生效')
     await loadAll()
-    emit('refreshed')
+    if (current()) emit('refreshed')
+  } catch {
+    // 取消确认或请求失败不清空当前覆盖依据。
   } finally {
-    overriding.value = false
+    if (current()) overriding.value = false
   }
 }
 
 async function clearHealthOverride() {
-  if (!props.modelId) return
+  if (!props.modelId || overriding.value || !auth.hasPermission('model:health-override')) return
+  const current = captureDrawer()
   overriding.value = true
   try {
     await updateModelHealthOverride(props.modelId, {
@@ -183,39 +241,50 @@ async function clearHealthOverride() {
       reason: '清除人工健康路由覆盖',
       expiresAt: null,
     })
+    if (!current()) return
     ElMessage.success('已恢复自动健康路由')
     await loadAll()
-    emit('refreshed')
+    if (current()) emit('refreshed')
+  } catch {
+    // 失败保留已有覆盖状态，避免把未成功的写入显示为成功。
   } finally {
-    overriding.value = false
+    if (current()) overriding.value = false
   }
 }
 
 async function rotateCredential() {
+  if (rotating.value || !auth.hasPermission('model:edit')) return
   if (!props.modelId || !rotation.value.secretValue.trim()) {
     ElMessage.warning('请输入新的凭据值')
     return
   }
-  const rotationImpact = await getModelImpact(props.modelId, 'ROTATE')
-  impactAction.value = 'ROTATE'
-  impact.value = rotationImpact
-  if (!rotationImpact.allowed) {
-    activeTab.value = 'impact'
-    ElMessage.error(`凭据轮换存在 ${rotationImpact.blockerCount} 个生效引用，请先解除阻断`)
-    return
-  }
+  const id = props.modelId
+  const payload = { ...rotation.value }
+  const current = captureDrawer()
   rotating.value = true
   try {
-    await rotateModelCredential(props.modelId, {
-      secretValue: rotation.value.secretValue,
-      expiresAt: rotation.value.expiresAt,
-    })
+    const rotationImpact = await getModelImpact(id, 'ROTATE')
+    if (!current()) return
+    impactReadId += 1
+    impactLoading.value = false
+    impactError.value = null
+    impactAction.value = 'ROTATE'
+    impact.value = rotationImpact
+    if (!rotationImpact.allowed) {
+      activeTab.value = 'impact'
+      ElMessage.error(`凭据轮换存在 ${rotationImpact.blockerCount} 个生效引用，请先解除阻断`)
+      return
+    }
+    await rotateModelCredential(id, payload)
+    if (!current()) return
     rotation.value = { secretValue: '', expiresAt: null }
     ElMessage.success('凭据已轮换，旧版本已标记为失效')
     await loadAll()
-    emit('refreshed')
+    if (current()) emit('refreshed')
+  } catch {
+    // 预检及写入失败保留本次输入，重试仍使用当前部署。
   } finally {
-    rotating.value = false
+    if (current()) rotating.value = false
   }
 }
 
@@ -245,6 +314,7 @@ function healthTagType(status: string | null | undefined) {
     </template>
 
     <div v-loading="loading" class="governance-drawer">
+      <CrudLoadState :error="loadError" :has-stale-data="detail !== null" :loading="loading" @retry="loadAll()" />
       <section class="status-rail">
         <div v-for="step in rail" :key="step.label" class="rail-item" :class="`is-${step.state}`">
           <span class="rail-dot" />
@@ -312,7 +382,7 @@ function healthTagType(status: string | null | undefined) {
           <div class="rotation-panel">
             <h3>轮换凭据</h3>
             <p>新值只用于本次请求；成功或关闭抽屉后会立即从表单状态清除。</p>
-            <el-form label-position="top">
+            <el-form label-position="top" :disabled="rotating || !auth.hasPermission('model:edit')">
               <el-form-item label="新凭据">
                 <el-input v-model="rotation.secretValue" type="password" show-password autocomplete="new-password" />
               </el-form-item>
@@ -374,7 +444,7 @@ function healthTagType(status: string | null | undefined) {
                 @click="clearHealthOverride"
               >恢复自动</el-button>
             </div>
-            <el-form label-position="top">
+            <el-form label-position="top" :disabled="overriding || !auth.hasPermission('model:health-override')">
               <el-form-item label="覆盖模式">
                 <el-radio-group v-model="healthOverride.mode">
                   <el-radio-button value="FORCE_UNHEALTHY">强制摘除</el-radio-button>
@@ -434,6 +504,7 @@ function healthTagType(status: string | null | undefined) {
         </el-tab-pane>
 
         <el-tab-pane label="影响预检" name="impact">
+          <CrudLoadState :error="impactError" :has-stale-data="impact !== null" :loading="impactLoading" @retry="refreshImpact" />
           <div class="section-heading">
             <div>
               <h3>变更影响图</h3>

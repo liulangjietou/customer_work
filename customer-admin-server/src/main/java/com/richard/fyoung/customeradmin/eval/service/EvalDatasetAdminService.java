@@ -13,6 +13,7 @@ import com.richard.fyoung.customeradmin.eval.dto.EvalDatasetCaseDiff;
 import com.richard.fyoung.customeradmin.eval.dto.EvalDatasetDiffVO;
 import com.richard.fyoung.customeradmin.eval.dto.EvalDatasetImportRequest;
 import com.richard.fyoung.customerwork.capability.eval.EvalCaseSource;
+import com.richard.fyoung.customerwork.capability.eval.EvalCaseConflictException;
 import com.richard.fyoung.customerwork.capability.eval.EvalDatasetCatalog;
 import com.richard.fyoung.customerwork.capability.eval.EvalDatasetRelease;
 import com.richard.fyoung.customerwork.capability.eval.EvalDatasetReleaseConflictException;
@@ -59,7 +60,11 @@ public class EvalDatasetAdminService {
         }
         PersistedEvalCase evalCase = toCase(type, caseId, request, EvalCaseSource.MANUAL,
             System.currentTimeMillis());
-        gateway.caseStore().save(evalCase);
+        try {
+            gateway.caseStore().create(evalCase);
+        } catch (EvalCaseConflictException conflict) {
+            throw new BizException(ResultCode.RESOURCE_DUPLICATE, "评测用例已存在: " + caseId);
+        }
         return evalCase;
     }
 

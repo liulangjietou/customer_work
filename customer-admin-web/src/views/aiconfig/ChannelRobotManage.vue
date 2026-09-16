@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useCrudPage } from '@/composables/useCrudPage'
+import { useQueryState } from '@/composables/useQueryState'
+import { useAuthStore } from '@/store/auth'
 import CrudLoadState from '@/components/CrudLoadState.vue'
 import type { FormInstance } from 'element-plus'
 import {
@@ -36,15 +38,21 @@ function channelMetaOf(type: ChannelType): ChannelTypeMeta {
 }
 
 // 启用中的智能体下拉：value 取 agentCode（后端绑定关系存的是 agentCode，非 id）。
-const agentOptions = ref<AgentVO[]>([])
+const auth = useAuthStore()
+const agentQuery = useQueryState(async () => (await pageAgents({ pageNum: 1, pageSize: 100 })).list,
+  () => [] as AgentVO[])
+const { data: agentOptions, loading: agentLoading, error: agentError } = agentQuery
 function agentNameOf(agentCode: string): string {
   return agentOptions.value.find((a) => a.agentCode === agentCode)?.agentName ?? agentCode
 }
 
 async function loadAgentOptions() {
-  const result = await pageAgents({ pageNum: 1, pageSize: 100 })
-  agentOptions.value = result.list
+  if (auth.hasPermission('agent:view')) await agentQuery.load()
 }
+
+watch([() => auth.token, () => auth.loginGeneration, () => auth.permissions.join('\0')], () => {
+  void loadAgentOptions()
+}, { flush: 'sync' })
 
 const formRef = ref<FormInstance>()
 // hasSecret 仅用于编辑时展示「已配置」标识，不随表单提交。
@@ -133,6 +141,7 @@ onMounted(() => {
 <template>
   <div class="page">
     <CrudLoadState :error="loadError" :has-stale-data="list.length > 0" :loading="loading" @retry="loadList" />
+    <CrudLoadState :error="agentError" :has-stale-data="agentOptions.length > 0" :loading="agentLoading" @retry="loadAgentOptions" />
     <el-alert type="info" :closable="false" show-icon title="钉钉机器人接入指引">
       <template #default>
         <div>1. 到钉钉开放平台创建「企业内部应用」。</div>
@@ -308,7 +317,8 @@ onMounted(() => {
           </div>
         </el-form-item>
         <el-form-item label="绑定智能体" prop="agentCode" :rules="[{ required: true, message: '请选择要绑定的智能体' }]">
-          <el-select v-model="form.agentCode" placeholder="请选择智能体" style="width: 100%">
+          <el-select v-model="form.agentCode" placeholder="请选择智能体" style="width: 100%"
+            :loading="agentLoading" :disabled="agentLoading || !auth.hasPermission('agent:view')">
             <el-option
               v-for="agent in agentOptions"
               :key="agent.agentCode"
@@ -320,6 +330,7 @@ onMounted(() => {
               <span v-if="agent.status !== 1" style="float: right; color: var(--el-text-color-placeholder); font-size: 12px">已停用</span>
             </el-option>
           </el-select>
+          <span v-if="!auth.hasPermission('agent:view')" class="el-form-item__error">当前账号无智能体查看权限，保留已有绑定。</span>
         </el-form-item>
         <el-form-item label="会话模式">
           <el-radio-group v-model="form.sessionMode!">

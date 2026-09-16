@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
+import CrudLoadState from '@/components/CrudLoadState.vue'
+import { useAuthSubmissionScope } from '@/composables/useAuthSubmissionScope'
+import { useAuthStore } from '@/store/auth'
 import {
   certifyModel,
   getModelCertification,
@@ -27,11 +30,16 @@ const emit = defineEmits<{
 }>()
 
 const loading = ref(false)
+const loadError = ref<unknown>(null)
+const auth = useAuthStore()
+const captureIdentity = useAuthSubmissionScope()
+let generation = 0
+let readId = 0
 const certifying = ref(false)
 const activating = ref(false)
 const current = ref<ModelCertification | null>(null)
 const history = ref<ModelCertification[]>([])
-const form = reactive<ModelCertificationRequest>({
+const initialForm = (): ModelCertificationRequest => ({
   requiredContextTokens: 8192,
   maxLatencyMs: 3000,
   maxInputPrice: 100,
@@ -41,62 +49,97 @@ const form = reactive<ModelCertificationRequest>({
   requireToolCall: true,
   requireStructuredOutput: true,
 })
+const form = reactive(initialForm())
 
 const effectiveStatus = computed(() => current.value?.effectiveStatus ?? 'UNKNOWN')
 const canActivate = computed(() => canActivateByCertification(effectiveStatus.value)
   && (props.model?.status !== 1 || props.model?.lifecycleStatus !== 'ACTIVE'))
 
-watch(() => props.modelId, (id) => {
-  if (id) void load(id)
-  else {
-    current.value = null
-    history.value = []
-  }
-}, { immediate: true })
+watch([() => props.modelId, () => props.model?.endpointRevision,
+  () => props.model?.credential?.currentVersion, () => props.model?.status,
+  () => props.model?.lifecycleStatus, () => auth.token, () => auth.loginGeneration,
+  () => auth.permissions.join('\0')], () => {
+  generation += 1
+  readId += 1
+  current.value = null
+  history.value = []
+  loadError.value = null
+  loading.value = certifying.value = activating.value = false
+  if (props.modelId && props.model) void load()
+}, { immediate: true, flush: 'sync' })
+
+watch([() => props.modelId, () => auth.token, () => auth.loginGeneration,
+  () => auth.permissions.join('\0')], () => Object.assign(form, initialForm()), { flush: 'sync' })
+
+function capturePanel() {
+  const expected = generation
+  const identity = captureIdentity()
+  return () => identity() && generation === expected && props.modelId !== null && props.model !== null
+}
 
 async function load(id = props.modelId) {
-  if (!id) return
+  if (!id || !props.model || !auth.hasPermission('model:view')) return
+  const isCurrent = capturePanel()
+  const request = ++readId
   loading.value = true
   try {
     const [snapshot, runs] = await Promise.all([
       getModelCertification(id),
       listModelCertificationRuns(id),
     ])
+    if (!isCurrent() || request !== readId) return
     current.value = snapshot
     history.value = runs
+    loadError.value = null
+  } catch (error) {
+    if (isCurrent() && request === readId) loadError.value = error
   } finally {
-    loading.value = false
+    if (isCurrent() && request === readId) loading.value = false
   }
 }
 
 async function certify() {
-  if (!props.modelId) return
+  if (!props.modelId || certifying.value || activating.value || !auth.hasPermission('model:certify')) return
+  const isCurrent = capturePanel()
+  const id = props.modelId
+  const payload = { ...form }
   certifying.value = true
   try {
-    current.value = await certifyModel(props.modelId, { ...form })
+    const result = await certifyModel(id, payload)
+    if (!isCurrent()) return
+    current.value = result
     const message = certificationResultMessage(current.value)
     ElMessage[message.type](message.text)
     await load()
-    emit('updated')
+    if (isCurrent()) emit('updated')
+  } catch {
+    // 请求层已反馈失败，保留门槛输入供当前部署重试。
   } finally {
-    certifying.value = false
+    if (isCurrent()) certifying.value = false
   }
 }
 
 async function activate() {
-  if (!props.modelId || !props.model || !canActivate.value) return
-  await ElMessageBox.confirm(
-    '后端将再次校验认证有效期、端点修订号和 SecretRef 版本。确认激活此部署？',
-    '激活模型部署',
-    { type: 'warning' },
-  )
+  if (!props.modelId || !props.model || !canActivate.value || activating.value || certifying.value
+    || !auth.hasPermission('model:edit')) return
+  const isCurrent = capturePanel()
+  const id = props.modelId
+  const payload = activeRequest(props.model)
   activating.value = true
   try {
-    await updateModel(props.modelId, activeRequest(props.model))
+    await ElMessageBox.confirm(
+      '后端将再次校验认证有效期、端点修订号和 SecretRef 版本。确认激活此部署？',
+      '激活模型部署', { type: 'warning' },
+    )
+    if (!isCurrent()) return
+    await updateModel(id, payload)
+    if (!isCurrent()) return
     ElMessage.success('部署已激活')
     emit('updated')
+  } catch {
+    // 取消与失败不会触发父抽屉刷新。
   } finally {
-    activating.value = false
+    if (isCurrent()) activating.value = false
   }
 }
 
@@ -150,6 +193,7 @@ function formatTime(value: string | null | undefined) {
 
 <template>
   <div v-loading="loading" class="certification-panel">
+    <CrudLoadState :error="loadError" :has-stale-data="current !== null" :loading="loading" @retry="load()" />
     <section class="cert-hero" :class="`is-${effectiveStatus.toLowerCase()}`">
       <div>
         <span>当前上线认证</span>
@@ -204,7 +248,7 @@ function formatTime(value: string | null | undefined) {
           <p>认证会产生不可变运行记录；有效期不超过当前凭据到期时间。</p>
         </div>
       </div>
-      <el-form :model="form" label-position="top">
+      <el-form :model="form" label-position="top" :disabled="certifying || activating || !auth.hasPermission('model:certify')">
         <div class="form-grid">
           <el-form-item label="最低上下文 Token"><el-input-number v-model="form.requiredContextTokens" :min="1" style="width: 100%" /></el-form-item>
           <el-form-item label="P95 延迟上限(ms)"><el-input-number v-model="form.maxLatencyMs" :min="1" style="width: 100%" /></el-form-item>
