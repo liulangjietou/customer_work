@@ -58,7 +58,7 @@ jobs:
         run: bash scripts/verify-no-committed-secrets.sh
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"
