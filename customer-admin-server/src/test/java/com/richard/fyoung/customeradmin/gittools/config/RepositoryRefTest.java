@@ -1,4 +1,4 @@
-package com.richard.fyoung.gittools.config;
+package com.richard.fyoung.customeradmin.gittools.config;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;

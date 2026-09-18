@@ -1,9 +1,8 @@
-package com.richard.fyoung.gittools.web;
+package com.richard.fyoung.customeradmin.gittools.web;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import com.richard.fyoung.gittools.config.GitToolsProperties;
-import java.nio.charset.StandardCharsets;
+import com.richard.fyoung.customeradmin.gittools.config.GitToolsProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -16,13 +15,13 @@ class McpAuthenticationFilterTest {
         properties.setServerToken("server-token");
         McpAuthenticationFilter filter = new McpAuthenticationFilter(properties);
 
-        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/mcp");
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/gittools/mcp");
         request.addHeader("Authorization", "Bearer wrong-token");
         MockHttpServletResponse response = new MockHttpServletResponse();
         filter.doFilter(request, response, new MockFilterChain());
         assertEquals(401, response.getStatus());
 
-        request = new MockHttpServletRequest("POST", "/mcp");
+        request = new MockHttpServletRequest("POST", "/gittools/mcp");
         request.addHeader("Authorization", "Bearer server-token");
         response = new MockHttpServletResponse();
         filter.doFilter(request, response, new MockFilterChain());
@@ -30,15 +29,15 @@ class McpAuthenticationFilterTest {
     }
 
     @Test
-    void leavesHealthEndpointPublic() throws Exception {
+    void rejectsMissingAuthorizationHeader() throws Exception {
         GitToolsProperties properties = new GitToolsProperties();
         properties.setServerToken("server-token");
         McpAuthenticationFilter filter = new McpAuthenticationFilter(properties);
-        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/health");
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/gittools/mcp");
         MockHttpServletResponse response = new MockHttpServletResponse();
 
         filter.doFilter(request, response, new MockFilterChain());
 
-        assertEquals(200, response.getStatus());
+        assertEquals(401, response.getStatus());
     }
 }

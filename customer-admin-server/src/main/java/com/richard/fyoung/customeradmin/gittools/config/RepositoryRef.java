@@ -1,4 +1,4 @@
-package com.richard.fyoung.gittools.config;
+package com.richard.fyoung.customeradmin.gittools.config;
 
 import java.net.URI;
 import java.net.URISyntaxException;

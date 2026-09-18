@@ -1,12 +1,12 @@
-package com.richard.fyoung.gittools.api;
+package com.richard.fyoung.customeradmin.gittools.api;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.richard.fyoung.gittools.config.GitToolsProperties;
-import com.richard.fyoung.gittools.config.RepositoryRef;
+import com.richard.fyoung.customeradmin.gittools.config.GitToolsProperties;
+import com.richard.fyoung.customeradmin.gittools.config.RepositoryRef;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;

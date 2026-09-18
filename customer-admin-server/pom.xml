@@ -42,6 +42,15 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
+        <!-- gittools 只读仓库检索 MCP 端点（admin.gittools.enabled，默认关闭）的 Servlet 传输层。
+             版本必须与 agentscope 传递进来的 io.modelcontextprotocol.sdk:mcp 一致（当前 0.17.2，
+             见 mvn dependency:tree -Dincludes=io.modelcontextprotocol.sdk）；升级 AgentScope 后同步核对，
+             否则 mcp-core 与传输层分属两代 API。 -->
+        <dependency>
+            <groupId>io.modelcontextprotocol.sdk</groupId>
+            <artifactId>mcp-spring-webmvc</artifactId>
+            <version>0.17.2</version>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-aop</artifactId>

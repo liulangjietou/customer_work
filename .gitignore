@@ -19,8 +19,3 @@ handdrawn/
 .claude
 CLAUDE.local.md
 
-# gittools 本地运行产物与凭据
-/gittools/target/
-/gittools/config.local.yml
-/gittools/config.local.yaml
-/gittools/.env

@@ -185,6 +185,14 @@ admin:
     enabled: ${ADMIN_A2A_ENABLED:false}
     agent-code: ${ADMIN_A2A_AGENT_CODE:}
     token: ${ADMIN_A2A_TOKEN:111111}
+  gittools:
+    # 只读 GitHub/GitLab 单仓库检索 MCP 端点（/gittools/mcp），默认关闭；其余默认值见 GitToolsProperties。
+    # 启用后 repository / token / server-token 缺一即启动失败；token 只从环境变量或外部 Secret 注入。
+    enabled: ${ADMIN_GITTOOLS_ENABLED:false}
+    repository: ${ADMIN_GITTOOLS_REPOSITORY:}
+    api-base-url: ${ADMIN_GITTOOLS_API_BASE_URL:}
+    token: ${ADMIN_GITTOOLS_GIT_TOKEN:}
+    server-token: ${ADMIN_GITTOOLS_SERVER_TOKEN:}
   # 后台登录用户的 AI 用量额度：按 sys_user 登录 ID 计，与客服端的
   # customer-work.subject-quota（按终端用户/IP/API Key 计）是同一套机制的两个部署侧。
   # 等级定义共用客服端库的 cw_subject_quota_level（靠 subject_type=ADMIN_USER 区分），
