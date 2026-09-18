@@ -24,6 +24,7 @@
         <module>customer-channel</module>
         <module>customer-admin-server</module>
         <module>customer-work-gateway</module>
+        <module>gittools</module>
     </modules>
 
     <properties>

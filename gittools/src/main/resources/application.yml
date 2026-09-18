@@ -1,0 +1,19 @@
+spring:
+  application:
+    name: gittools-mcp-server
+
+server:
+  address: ${GITTOOLS_HOST:127.0.0.1}
+  port: ${GITTOOLS_PORT:3002}
+
+gittools:
+  provider: ${GITTOOLS_PROVIDER:github}
+  repository: ${GITTOOLS_REPOSITORY:}
+  api-base-url: ${GITTOOLS_API_BASE_URL:}
+  token: ${GITTOOLS_GIT_TOKEN:}
+  server-token: ${GITTOOLS_SERVER_TOKEN:}
+  ref: ${GITTOOLS_REF:main}
+  connect-timeout: ${GITTOOLS_CONNECT_TIMEOUT:5s}
+  read-timeout: ${GITTOOLS_READ_TIMEOUT:20s}
+  max-response-bytes: ${GITTOOLS_MAX_RESPONSE_BYTES:2097152}
+  max-file-bytes: ${GITTOOLS_MAX_FILE_BYTES:524288}

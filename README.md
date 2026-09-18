@@ -92,6 +92,7 @@ customer-work 把典型客服流程落成一套可运行的 Java Agent 系统：
 | `customer-work-gateway` | 8888 | 可选统一入口，通过 Nacos 发现并路由 app / admin | Spring Cloud Gateway、Nacos |
 | `customer-admin-web` | 5174 | Vue 3 运营后台 | 8082 API |
 | `customer-work-app` | 5175 | Vue 3 用户 H5：登录、聊天、工单、CSAT | 8080 API / WebSocket |
+| `gittools` | 3002 | 独立只读 GitHub/GitLab 仓库检索 MCP Server（Streamable HTTP） | Java 17、Spring Boot；按配置接入单个仓库 |
 
 ```mermaid
 flowchart LR
