@@ -1,4 +1,4 @@
-package com.richard.fyoung.gittools.api;
+package com.richard.fyoung.customeradmin.gittools.api;
 
 public class GitApiException extends RuntimeException {
     private final int statusCode;

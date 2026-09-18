@@ -23,6 +23,7 @@ public class AdminProductionReadinessValidator implements InitializingBean {
 
     private static final String DEV_AES_KEY = "0123456789abcdef0123456789abcdef";
     private static final int MIN_A2A_TOKEN_BYTES = 32;
+    private static final int MIN_GITTOOLS_SERVER_TOKEN_BYTES = 32;
     private static final int MIN_RUNTIME_ACK_TOKEN_BYTES = 32;
     private static final List<String> FORBIDDEN_PRODUCTION_AI_CODING_FEATURES = List.of(
         "admin.sandbox.features.command-execution-enabled",
@@ -80,6 +81,7 @@ public class AdminProductionReadinessValidator implements InitializingBean {
         validateModelHealth(violations);
         validateOpenApi(violations);
         validateA2a(violations);
+        validateGitTools(violations);
         validateRuntimePublish(violations);
         validateGovernance(violations);
         validatePublicDeployment(violations);
@@ -274,6 +276,21 @@ public class AdminProductionReadinessValidator implements InitializingBean {
         String token = value("admin.a2a.token");
         require(violations, "admin.a2a.token", isProductionSecret(token)
             && token.getBytes(StandardCharsets.UTF_8).length >= MIN_A2A_TOKEN_BYTES);
+    }
+
+    /**
+     * gittools MCP 端点：启用时入站令牌是它唯一的访问控制（端点不走后台登录态），
+     * 与 A2A 同一强度要求；出站 Git token 只要求存在，其强度由 GitHub/GitLab 决定。
+     */
+    private void validateGitTools(List<String> violations) {
+        if (!environment.getProperty("admin.gittools.enabled", Boolean.class, false)) {
+            return;
+        }
+        requireRemote(violations, "admin.gittools.repository");
+        requireSecret(violations, "admin.gittools.token");
+        String serverToken = value("admin.gittools.server-token");
+        require(violations, "admin.gittools.server-token", isProductionSecret(serverToken)
+            && serverToken.getBytes(StandardCharsets.UTF_8).length >= MIN_GITTOOLS_SERVER_TOKEN_BYTES);
     }
 
     private void validateGovernance(List<String> violations) {

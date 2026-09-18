@@ -74,6 +74,37 @@ class AdminProductionReadinessValidatorTest {
     }
 
     @Test
+    void gitToolsShouldRejectWeakServerTokenWhenEnabled() {
+        MockEnvironment environment = validEnvironment()
+            .withProperty("admin.gittools.enabled", "true")
+            .withProperty("admin.gittools.repository", "https://github.com/acme/demo")
+            .withProperty("admin.gittools.token", "ghp_production_git_token")
+            .withProperty("admin.gittools.server-token", "short-token");
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+            () -> new AdminProductionReadinessValidator(environment).afterPropertiesSet());
+
+        assertTrue(error.getMessage().contains("admin.gittools.server-token"));
+        assertFalse(error.getMessage().contains("short-token"));
+    }
+
+    @Test
+    void gitToolsShouldAcceptStrongServerTokenWhenEnabled() {
+        MockEnvironment environment = validEnvironment()
+            .withProperty("admin.gittools.enabled", "true")
+            .withProperty("admin.gittools.repository", "https://github.com/acme/demo")
+            .withProperty("admin.gittools.token", "ghp_production_git_token")
+            .withProperty("admin.gittools.server-token", "production-gittools-token-at-least-32-bytes");
+
+        assertDoesNotThrow(() -> new AdminProductionReadinessValidator(environment).afterPropertiesSet());
+    }
+
+    @Test
+    void gitToolsShouldBeIgnoredWhenDisabled() {
+        assertDoesNotThrow(() -> new AdminProductionReadinessValidator(validEnvironment()).afterPropertiesSet());
+    }
+
+    @Test
     void dockerSandbox_shouldRequireNetworkIsolation() {
         MockEnvironment environment = validEnvironment()
             .withProperty("admin.sandbox.mode", "docker")

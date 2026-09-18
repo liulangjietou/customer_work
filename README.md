@@ -88,11 +88,10 @@ customer-work 把典型客服流程落成一套可运行的 Java Agent 系统：
 | `customer-work-starter` | — | 可复用 Agent 基础设施：模型、会话、记忆、RAG、工具 SPI、治理中间件、审批与工单 | AgentScope Java、Spring Boot AutoConfiguration |
 | `customer-work-app-server` | 8080 | 客服运行面：HTTP / SSE / WebSocket、用户工单与健康检查 | `customer-work-starter`、MySQL；Redis / 对象存储按能力启用 |
 | `customer-channel` | 8081 | 协议与渠道适配：chat-completions、AG-UI、Studio、钉钉 / 飞书 / 企业微信；另含钉钉与微信公众号生产接入 | `customer-work-starter`、渠道连接器 |
-| `customer-admin-server` | 8082 | 运营控制面：模型、Agent、MCP、评测、发布、账单、坐席工作台与 AI 编码助手 | `customer-work-starter`、独立 `customer_admin` 库 |
+| `customer-admin-server` | 8082 | 运营控制面：模型、Agent、MCP、评测、发布、账单、坐席工作台与 AI 编码助手；可选只读 Git 仓库检索 MCP 端点（`admin.gittools.enabled`，默认关闭） | `customer-work-starter`、独立 `customer_admin` 库 |
 | `customer-work-gateway` | 8888 | 可选统一入口，通过 Nacos 发现并路由 app / admin | Spring Cloud Gateway、Nacos |
 | `customer-admin-web` | 5174 | Vue 3 运营后台 | 8082 API |
 | `customer-work-app` | 5175 | Vue 3 用户 H5：登录、聊天、工单、CSAT | 8080 API / WebSocket |
-| `gittools` | 3002 | 独立只读 GitHub/GitLab 仓库检索 MCP Server（Streamable HTTP） | Java 17、Spring Boot；按配置接入单个仓库 |
 
 ```mermaid
 flowchart LR

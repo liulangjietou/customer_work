@@ -1,8 +1,8 @@
-package com.richard.fyoung.gittools.mcp;
+package com.richard.fyoung.customeradmin.gittools.mcp;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.richard.fyoung.gittools.api.RepositoryApi;
+import com.richard.fyoung.customeradmin.gittools.api.RepositoryApi;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema;

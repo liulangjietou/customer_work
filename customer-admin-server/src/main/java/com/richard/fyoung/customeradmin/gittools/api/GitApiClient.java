@@ -1,10 +1,10 @@
-package com.richard.fyoung.gittools.api;
+package com.richard.fyoung.customeradmin.gittools.api;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.richard.fyoung.gittools.config.GitToolsProperties;
-import com.richard.fyoung.gittools.config.RepositoryProvider;
-import com.richard.fyoung.gittools.config.RepositoryRef;
+import com.richard.fyoung.customeradmin.gittools.config.GitToolsProperties;
+import com.richard.fyoung.customeradmin.gittools.config.RepositoryProvider;
+import com.richard.fyoung.customeradmin.gittools.config.RepositoryRef;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
