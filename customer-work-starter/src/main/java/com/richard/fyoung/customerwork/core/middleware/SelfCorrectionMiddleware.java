@@ -1,6 +1,10 @@
 package com.richard.fyoung.customerwork.core.middleware;
 
 import com.richard.fyoung.customerwork.capability.handoff.HandoffService;
+import com.richard.fyoung.customerwork.capability.typesafe.JevDecisionEvent;
+import com.richard.fyoung.customerwork.capability.typesafe.JevDecisionService;
+import com.richard.fyoung.customerwork.capability.typesafe.JevRunMode;
+import com.richard.fyoung.customerwork.capability.typesafe.NoulVerdict;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.config.properties.HooksProperties;
 import com.richard.fyoung.customerwork.observability.AuditSink;
@@ -23,15 +27,20 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * 拦住智能体凭空告诉用户「钱已经退了」。
@@ -74,6 +83,15 @@ import java.util.function.Function;
  * <b>立即停止后续输出 + 追加澄清 + 转人工</b>——澄清话术必须明确否定刚才那段，
  * 只说"正在处理"等于默认了前面的说法。要一个字都不漏只能整段缓冲后再发，那就没有流式了。</p>
  *
+ * <h3>Jev 语义补拦</h3>
+ * <p>关键词只认字面，「款项已原路返回您的账户」这类没命中关键词的同义表述会漏过去。开启 Jev 后，
+ * 在关键词没命中、且本轮没查过真实状态时，用语义判定再问一次。<b>只收紧不放宽</b>：关键词已经拦下的
+ * 不再问 Jev，查过真实状态的也不问，Jev 只能额外拦截；Jev 不可用时退回纯关键词判定。</p>
+ *
+ * <p>判定放在<b>最终结果</b>上而不是每个文本块结束时：一轮 ReAct 常有多个文本块（「我先查一下」再调工具），
+ * 逐块判定会在工具调用前插入阻塞等待，还要付好几次调用。判定的文本是本轮用户实际看到的全部正文。
+ * 流式下拦截时正文早已显示完，澄清作为增量追加在末尾，与关键词拦截的流式语义一致。</p>
+ *
  * @author owlzhangfq@gmail.com
  */
 @Component
@@ -84,6 +102,9 @@ public class SelfCorrectionMiddleware implements MiddlewareBase {
     private static final String CODE_CHECK_FAIL = "SELF_CORRECTION_ERROR";
     private static final String M_HIT = "customerwork.selfcorrection.unverified.claim";
     private static final String AUDIT_TYPE = "self-correction-unverified-claim";
+    private static final String JEV_TITLE = "答复安全闸门";
+    private static final String JEV_HIT_LABEL = "Jev 语义判定";
+    private static final String JEV_STAGE = "jev";
 
     private final boolean enabled;
     private final List<String> paymentKeywords;
@@ -93,11 +114,42 @@ public class SelfCorrectionMiddleware implements MiddlewareBase {
     private final ObjectProvider<HandoffService> handoffProvider;
     private final AuditSink auditSink;
     private final MeterRegistry meterRegistry;
+    /** 取不到时（未开启 Jev）退回纯关键词判定。 */
+    private final Supplier<JevDecisionService> jevSupplier;
+    private final JevRunMode mode;
 
+    /** Spring 装配给 C 端：一律 LIVE，不发决策事件。 */
+    @Autowired
+    public SelfCorrectionMiddleware(CustomerWorkProperties properties,
+                                    ObjectProvider<HandoffService> handoffProvider,
+                                    ObjectProvider<AuditSink> auditSinkProvider,
+                                    ObjectProvider<MeterRegistry> meterRegistryProvider,
+                                    ObjectProvider<JevDecisionService> jevProvider) {
+        this(properties, handoffProvider, auditSinkProvider, meterRegistryProvider, jevProvider::getIfAvailable,
+            JevRunMode.LIVE);
+    }
+
+    /** 不接 Jev 的构造：纯关键词判定。 */
     public SelfCorrectionMiddleware(CustomerWorkProperties properties,
                                     ObjectProvider<HandoffService> handoffProvider,
                                     ObjectProvider<AuditSink> auditSinkProvider,
                                     ObjectProvider<MeterRegistry> meterRegistryProvider) {
+        this(properties, handoffProvider, auditSinkProvider, meterRegistryProvider, () -> null, JevRunMode.LIVE);
+    }
+
+    /**
+     * 显式指定 Jev 与运行模式（后台用 {@link JevRunMode#LIVE_TRACED}：真拦截并展示判定）。
+     *
+     * @param jevSupplier 每次判定现取，返回 null 表示未开启 Jev
+     */
+    public SelfCorrectionMiddleware(CustomerWorkProperties properties,
+                                    ObjectProvider<HandoffService> handoffProvider,
+                                    ObjectProvider<AuditSink> auditSinkProvider,
+                                    ObjectProvider<MeterRegistry> meterRegistryProvider,
+                                    Supplier<JevDecisionService> jevSupplier,
+                                    JevRunMode mode) {
+        this.jevSupplier = jevSupplier;
+        this.mode = mode;
         HooksProperties.SelfCorrection cfg = properties.getHooks().getSelfCorrection();
         this.enabled = cfg.isEnabled();
         this.paymentKeywords = List.copyOf(cfg.getPaymentKeywords());
@@ -156,6 +208,7 @@ public class SelfCorrectionMiddleware implements MiddlewareBase {
                                         UnverifiedClaimTrace trace, OutboundState state) {
         StreamKeywordMatcher matcher = state.matchers.computeIfAbsent(
             String.valueOf(delta.getBlockId()), k -> new StreamKeywordMatcher(paymentKeywords));
+        state.remember(delta);
         if (state.tripped) {
             // 已经拦下过：后续片段一律丢弃
             return Flux.empty();
@@ -209,13 +262,85 @@ public class SelfCorrectionMiddleware implements MiddlewareBase {
         if (state.tripped) {
             return Flux.just(new AgentResultEvent(rebuild(msg, text + clarification)));
         }
-        String hit = firstHit(text);
-        if (hit == null || hasEvidence(trace)) {
+        if (hasEvidence(trace)) {
             return Flux.just(result);
+        }
+        String hit = firstHit(text);
+        if (hit == null) {
+            return jevGuard(agent, ctx, result, msg, text, trace, state);
         }
         state.tripped = true;
         onHit(agent, ctx, trace, hit, "final");
         return Flux.just(new AgentResultEvent(rebuild(msg, text + clarification)));
+    }
+
+    /**
+     * 关键词没命中、本轮也没查过真实状态时，用 Jev 语义判定补拦。
+     *
+     * <p>只判主 Agent 的最终结果（子 Agent 的结果不作为答复展示），每轮只判一次。
+     * 失败一律放行原结果（fail-open），与本类对自身故障的处理一致。</p>
+     */
+    private Flux<AgentEvent> jevGuard(Agent agent, RuntimeContext ctx, AgentResultEvent result, Msg msg, String text,
+                                      UnverifiedClaimTrace trace, OutboundState state) {
+        JevDecisionService jev = jevSupplier.get();
+        if (jev == null || !jev.properties().getPaymentClaim().isEnabled() || state.jevChecked
+            || result.getSource() != null) {
+            return Flux.just(result);
+        }
+        state.jevChecked = true;
+        String judged = state.seenText.length() > 0 ? state.seenText.toString() : text;
+        return jev.judgePaymentClaim(judged)
+            .map(Optional::of)
+            .defaultIfEmpty(Optional.empty())
+            .map(verdict -> applyJev(jev, agent, ctx, result, msg, text, trace, state, verdict))
+            .onErrorResume(e -> {
+                log.error("[FIX] jev payment claim check failed, passing through, code={}", CODE_CHECK_FAIL, e);
+                return Mono.just(List.of(result));
+            })
+            .flatMapMany(Flux::fromIterable);
+    }
+
+    private List<AgentEvent> applyJev(JevDecisionService jev, Agent agent, RuntimeContext ctx,
+                                      AgentResultEvent result, Msg msg, String text, UnverifiedClaimTrace trace,
+                                      OutboundState state, Optional<NoulVerdict> maybe) {
+        List<AgentEvent> events = new ArrayList<>();
+        if (maybe.isEmpty()) {
+            jev.recordDecision(JevDecisionEvent.POINT_PAYMENT_CLAIM, JevDecisionEvent.RESULT_DEGRADED, mode);
+            if (mode.emit()) {
+                events.add(JevDecisionEvent.degraded(JevDecisionEvent.POINT_PAYMENT_CLAIM, JEV_TITLE));
+            }
+            events.add(result);
+            return events;
+        }
+        NoulVerdict verdict = maybe.get();
+        boolean blocked = verdict.atLeast(jev.properties().getPaymentClaim().getMinProbability());
+        boolean execute = blocked && mode.act();
+        jev.recordDecision(JevDecisionEvent.POINT_PAYMENT_CLAIM,
+            blocked ? JevDecisionEvent.RESULT_BLOCKED : JevDecisionEvent.RESULT_PASSED, mode);
+        if (execute) {
+            state.tripped = true;
+            onHit(agent, ctx, trace, JEV_HIT_LABEL, JEV_STAGE);
+        }
+        if (mode.emit()) {
+            events.add(JevDecisionEvent.decided(mode, JevDecisionEvent.POINT_PAYMENT_CLAIM, JEV_TITLE,
+                String.format("回复断言资金已到账的概率 %.2f", verdict.probability()),
+                blocked ? blockAction() : "放行", execute, verdict.probability(), verdict.model(),
+                verdict.latencyMs()));
+        }
+        if (!execute) {
+            events.add(result);
+            return events;
+        }
+        // 流式下正文早已逐片推给用户，澄清必须也作为增量追加才看得到；最终结果照样补上，供非流式消费方使用
+        if (state.lastReplyId != null) {
+            events.add(new TextBlockDeltaEvent(state.lastReplyId, state.lastBlockId, clarification));
+        }
+        events.add(new AgentResultEvent(rebuild(msg, text + clarification)));
+        return events;
+    }
+
+    private String blockAction() {
+        return handoffOnHit && handoffProvider.getIfAvailable() != null ? "追加否定澄清并转人工" : "追加否定澄清";
     }
 
     private String firstHit(String text) {
@@ -308,6 +433,21 @@ public class SelfCorrectionMiddleware implements MiddlewareBase {
     private static final class OutboundState {
         private final Map<String, StreamKeywordMatcher> matchers = new ConcurrentHashMap<>();
         private volatile boolean tripped;
+        /** 本轮用户实际看到的全部正文，供 Jev 语义判定。 */
+        private final StringBuilder seenText = new StringBuilder();
+        /** 最后一个正文增量的标识：流式下追加澄清要挂在它上面。 */
+        private volatile String lastReplyId;
+        private volatile String lastBlockId;
+        /** 每轮只做一次 Jev 判定。 */
+        private volatile boolean jevChecked;
+
+        private synchronized void remember(TextBlockDeltaEvent delta) {
+            if (delta.getDelta() != null) {
+                seenText.append(delta.getDelta());
+            }
+            lastReplyId = delta.getReplyId();
+            lastBlockId = delta.getBlockId();
+        }
     }
 
     /** 顺序契约见 {@link MiddlewareOrders}：模型输出的自我纠错。 */

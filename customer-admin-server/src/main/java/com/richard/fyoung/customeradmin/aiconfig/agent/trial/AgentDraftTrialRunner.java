@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.aiconfig.agent.trial;
 
+import com.richard.fyoung.customeradmin.config.AdminJevMiddlewares;
 import com.richard.fyoung.customerwork.capability.eval.EvalFingerprint;
 import com.richard.fyoung.customerwork.capability.eval.EvalVersionBinding;
 import com.richard.fyoung.customerwork.capability.prompt.PromptVersion;
@@ -7,6 +8,7 @@ import com.richard.fyoung.customerwork.core.middleware.IndirectInjectionGuardMid
 import com.richard.fyoung.customerwork.core.middleware.MaskingMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.ModelCompletionMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.PromptInjectionGuardMiddleware;
+import com.richard.fyoung.customerwork.core.middleware.SelfCorrectionMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.SensitiveWordMiddleware;
 import com.richard.fyoung.customerwork.data.calllog.AgentCallLineage;
 import com.richard.fyoung.customerwork.data.calllog.AgentCallMeta;
@@ -29,6 +31,7 @@ import io.agentscope.core.state.InMemoryAgentStateStore;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.TimeoutException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -46,6 +49,8 @@ public class AgentDraftTrialRunner {
     private final MaskingMiddleware masking;
     private final PromptInjectionGuardMiddleware promptGuard;
     private final IndirectInjectionGuardMiddleware indirectGuard;
+    /** 答复安全闸门；可空：单测直接 new 本类时不装配。 */
+    private SelfCorrectionMiddleware answerGate;
 
     public AgentDraftTrialRunner(AgentDraftTrialModels models, AgentDraftTrialResources resources,
         AgentCallTimingMiddleware timing, @Nullable SensitiveWordMiddleware sensitive, MaskingMiddleware masking,
@@ -60,6 +65,18 @@ public class AgentDraftTrialRunner {
         this.indirectGuard = indirectGuard;
         // 这里只登记唯一工具名的统计类别，工具实例仍由每次试用单独创建。
         toolKinds.registerSkillTools(List.of(AgentDraftReadonlyTools.READ_SKILL_TOOL));
+    }
+
+    /**
+     * 只挂答复安全闸门，不挂 Jev 的三个影子决策点。
+     *
+     * <p>试用的意义是评估「上线后会怎么答」，闸门会改写答案，缺了它试用结果就与线上不一致；
+     * 影子决策只改变时间线上的展示，而试用走 {@code call()} 只取最终文本、没有时间线，
+     * 挂上它们只会白付每一轮的 Jev 调用费。走 setter 是因为两处单测直接 new 本类。</p>
+     */
+    @Autowired(required = false)
+    void setJevMiddlewares(AdminJevMiddlewares jevMiddlewares) {
+        this.answerGate = jevMiddlewares == null ? null : jevMiddlewares.selfCorrection();
     }
 
     /** 调用标为 EVALUATION，只记录观察结果，不生成发布通过结论或写正式配置。 */
@@ -85,6 +102,7 @@ public class AgentDraftTrialRunner {
                 .middleware(timing).middleware(new ModelCompletionMiddleware()).middleware(guard);
             if (sensitive != null) builder.middleware(sensitive);
             builder.middleware(promptGuard).middleware(masking).middleware(indirectGuard);
+            if (answerGate != null) builder.middleware(answerGate);
             if (configuration.toolTimeoutSeconds() != null || configuration.toolMaxAttempts() != null) {
                 var execution = ExecutionConfig.builder();
                 if (configuration.toolTimeoutSeconds() != null) {

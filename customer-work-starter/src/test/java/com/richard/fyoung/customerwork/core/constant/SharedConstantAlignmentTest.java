@@ -95,6 +95,13 @@ class SharedConstantAlignmentTest {
         "memory",
         // 默认租户码 / 默认会话名
         "default",
+        // 用户端 WS 帧的字段名 vs 退款工具 submitRefund 的入参名：前者是我们与前端的约定，
+        // 后者跟着工具签名走，改任一侧都不要求另一侧同步
+        "reason",
+        // 微信渠道回调的应答体 vs Jev 调用指标的结果取值：一个是对方协议规定的字面，一个是监控维度
+        "success",
+        // 工单 WS 事件帧的字段名 vs Jev 决策事件（后台时间线）的载荷字段名，两套协议各自演进
+        "title",
         // 框架 todo_write 工具入参 schema 的字段名（由 TodoTools.TodoItem 定义）
         // vs 本项目 WS 帧的契约字段名。两者的所有权完全不同：
         // 前者跟着框架升级走，后者是我们与前端的约定。绑在一起会让"框架改了字段名"

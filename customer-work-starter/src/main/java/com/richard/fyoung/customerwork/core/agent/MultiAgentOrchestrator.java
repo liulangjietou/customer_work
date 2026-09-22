@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.core.agent;
 
+import com.richard.fyoung.customerwork.capability.typesafe.JevDecisionService;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.config.properties.MultiAgentProperties;
 import com.richard.fyoung.customerwork.core.dto.IntentResult;
@@ -101,6 +102,7 @@ public class MultiAgentOrchestrator {
     private final KnowledgeBackend knowledgeBackend;
     /** 可为 null：未接入 Micrometer 时降级为无指标（仅日志）。 */
     private MeterRegistry meterRegistry;
+    private JevDecisionService jevDecisionService;
     /**
      * 治理中间件装配器：与 {@code CustomerServiceAgentFactory} 共用同一份装配。
      *
@@ -148,6 +150,15 @@ public class MultiAgentOrchestrator {
         this.afterSalesBackend = afterSalesBackend;
         this.knowledgeBackend = knowledgeBackend;
         this.governanceAssembler = governanceAssembler;
+    }
+
+    /**
+     * Jev 决策服务（可选）：仅 {@code customer-work.typesafe.enabled=true} 时才有 Bean。
+     * 走 setter 而非构造参数：该类有多个构造重载被单测大量使用，增益型依赖不该连锁改动它们。
+     */
+    @Autowired(required = false)
+    void setJevDecisionService(JevDecisionService jevDecisionService) {
+        this.jevDecisionService = jevDecisionService;
     }
 
     /** 测试可注入指标注册表（避免暴露 setter 给生产链路误用）。 */
@@ -307,7 +318,39 @@ public class MultiAgentOrchestrator {
                 return Mono.just(picked);
             }
         }
-        // 慢车道：交 LLM 分诊
+        // 中车道：Jev 结构化决策（高置信才采信；不可用/低置信/判 other 一律落到慢车道）
+        if (jevDecisionService != null) {
+            return jevRoute(userText, all).switchIfEmpty(Mono.defer(() -> llmRoute(sessionId, userText, all)));
+        }
+        return llmRoute(sessionId, userText, all);
+    }
+
+    /**
+     * Jev 中车道。返回 empty 表示「没有可采信的决策」，由调用方切到 LLM 分诊。
+     *
+     * <p>置信度门槛与「other」语义收在 {@code TurnDecision#routableIntent}，与主链路工具收窄共用一套判定。
+     * 调用是异步的，不占 Reactor 线程。</p>
+     */
+    private Mono<List<ReActAgent>> jevRoute(String userText, List<ReActAgent> all) {
+        double minConfidence = jevDecisionService.properties().getIntentMinConfidence();
+        return jevDecisionService.decideTurn(userText)
+            .flatMap(decision -> Mono.justOrEmpty(decision.routableIntent(minConfidence))
+                .map(intent -> {
+                    List<ReActAgent> picked = expertsForIntent(intent, all);
+                    log.info("multi-agent routing(jev-lane): intent={}, confidence={}, picked={}", intent,
+                        decision.intent().confidence(),
+                        picked.stream().map(ReActAgent::getName).collect(Collectors.toList()));
+                    recordRoute("jev:" + intent, picked.size());
+                    return picked;
+                }))
+            .onErrorResume(e -> {
+                log.error("multi-agent jev routing failed, fallback to llm, errorCode={}", ERR_ROUTE_FAIL, e);
+                return Mono.empty();
+            });
+    }
+
+    /** 慢车道：交 LLM 分诊。 */
+    private Mono<List<ReActAgent>> llmRoute(String sessionId, String userText, List<ReActAgent> all) {
         return Mono.using(
                 this::routerAgent,
                 router -> router.call("判断用户意图并结构化输出：" + userText, IntentResult.class,
