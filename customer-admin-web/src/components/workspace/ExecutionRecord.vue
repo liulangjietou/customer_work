@@ -30,6 +30,11 @@ const summary = computed(() => summarizeTrace(props.message?.nodes ?? []))
           <dt>工具调用</dt>
           <dd>{{ summary.toolCount }}</dd>
         </div>
+        <!-- Jev 的决策不是智能体的步骤，单独计数；Jev 未开启时不占位 -->
+        <div v-if="summary.decisionCount > 0" class="record-metric--jev">
+          <dt>Jev 决策</dt>
+          <dd>{{ summary.decisionCount }}</dd>
+        </div>
       </dl>
       <p class="record-note">本次会话收到的执行记录</p>
       <TraceTimeline :nodes="message.nodes" :active="active" :failed="message.failed" />
@@ -78,6 +83,10 @@ small {
   border: 1px solid var(--cw-line);
   border-radius: 7px;
   padding: 12px;
+}
+.record-metrics > .record-metric--jev {
+  grid-column: 1 / -1;
+  border: 1px dashed color-mix(in srgb, var(--el-color-warning) 45%, var(--cw-line));
 }
 dd {
   margin: 8px 0 0;

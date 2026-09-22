@@ -3,6 +3,8 @@ package com.richard.fyoung.customeradmin.workspace.chat.service;
 import com.richard.fyoung.customeradmin.common.exception.BizException;
 import com.richard.fyoung.customeradmin.common.result.ResultCode;
 import com.richard.fyoung.customeradmin.contentguard.config.ContentGuardProperties;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.richard.fyoung.customerwork.capability.typesafe.JevDecisionEvent;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatNodeKind;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk;
 import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatTerminal;
@@ -37,6 +39,7 @@ import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEndEvent;
 import io.agentscope.core.event.AgentEvent;
+import io.agentscope.core.event.CustomEvent;
 import io.agentscope.core.event.AgentResultEvent;
 import io.agentscope.core.event.ModelCallEndEvent;
 import io.agentscope.core.event.ModelCallStartEvent;
@@ -91,6 +94,8 @@ public class ChatService {
     private static final String MAIN_AGENT_SOURCE_KEY = "";
     /** "调用大模型"节点的展示文案。 */
     private static final String MODEL_CALL_TEXT = "调用大模型";
+    /** Jev 决策载荷只含字符串、布尔与数值，无状态序列化，线程安全。 */
+    private static final ObjectMapper DECISION_JSON = new ObjectMapper();
     /** 子 Agent 调用链 path 的分隔符（框架 {@code AgentSpawnTool#buildSourcePath} 的约定：父会话/子 agentId）。 */
     private static final String SOURCE_PATH_SEPARATOR = "/";
 
@@ -568,6 +573,12 @@ public class ChatService {
 
     /** 父 Agent 事件 → 展示片段，映射规则见 {@link #toChunks}。 */
     private List<ChatStreamChunk> toMainChunks(AgentEvent event, ToolSourceInfo toolSource, StreamState state) {
+        // Jev 决策只展示主 Agent 的：子 Agent 的输入是父 Agent 派发的任务描述而不是用户原话，
+        // 拿它判情绪与意图没有意义，展示出来只会误导。子 Agent 分支不识别这类事件，天然忽略
+        if (JevDecisionEvent.isDecision(event)) {
+            String payload = decisionPayload((CustomEvent) event);
+            return payload == null ? List.of() : List.of(new ChatStreamChunk(ChatNodeKind.DECISION, payload));
+        }
         if (event instanceof ModelCallStartEvent) {
             return List.of(new ChatStreamChunk(ChatNodeKind.MODEL_CALL, MODEL_CALL_TEXT));
         }
@@ -607,6 +618,16 @@ public class ChatService {
             return StringUtils.hasText(text) ? List.of(new ChatStreamChunk(ChatNodeKind.ANSWER, text)) : List.of();
         }
         return List.of();
+    }
+
+    /** Jev 决策载荷转 JSON；失败只丢掉这一个展示节点，绝不影响对话本身。 */
+    private static String decisionPayload(CustomEvent event) {
+        try {
+            return DECISION_JSON.writeValueAsString(event.getValue());
+        } catch (Exception e) {
+            log.error("[chat] jev decision payload serialize failed, code={}", "CHAT-JEV-DECISION-SERIALIZE-FAIL", e);
+            return null;
+        }
     }
 
     /**

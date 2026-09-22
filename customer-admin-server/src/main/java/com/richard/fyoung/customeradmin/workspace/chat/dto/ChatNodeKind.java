@@ -29,6 +29,12 @@ public enum ChatNodeKind {
     SUBAGENT_START,
     /** 子 Agent 完成：子 Agent 的 {@code AGENT_RESULT}（最终文本），不走父 Agent 的 {@link #ANSWER} 正文链路。 */
     SUBAGENT_RESULT,
+    /**
+     * Jev 结构化决策（情绪升级 / 意图与工具收窄 / 退款风险 / 答复安全闸门），与智能体自身的思考分开展示。
+     * text 为决策载荷 JSON，字段契约见 starter 的 {@code JevDecisionEvent}。后台智能体的三个决策点跑影子模式，
+     * 载荷里 {@code executed=false} 表示「线上会这么做，后台未执行」。
+     */
+    DECISION,
     /** VibeCoding 专用：会话 workspace 文件发生变更（新增/修改/删除），仅由 VibeCodingService 产出。 */
     FILE_CHANGE,
 

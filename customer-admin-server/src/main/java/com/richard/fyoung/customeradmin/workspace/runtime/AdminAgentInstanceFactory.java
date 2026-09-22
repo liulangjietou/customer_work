@@ -1,5 +1,6 @@
 package com.richard.fyoung.customeradmin.workspace.runtime;
 
+import com.richard.fyoung.customeradmin.config.AdminJevMiddlewares;
 import com.richard.fyoung.customerwork.core.middleware.ModelCompletionMiddleware;
 import io.agentscope.core.state.AgentState;
 import com.richard.fyoung.customerwork.core.constant.McpTimeouts;
@@ -220,6 +221,8 @@ public class AdminAgentInstanceFactory {
     /** MCP 工具主体策略登记与执行闸门，按智能体作用域隔离。 */
     private final McpToolAuthorizationRegistry mcpToolAuthorizationRegistry;
     private final SubjectToolAuthorizationMiddleware subjectToolAuthorizationMiddleware;
+    /** Jev 中间件组：决策点跑影子模式，答复闸门真执行；Jev 未开启时全部原样透传。 */
+    private final AdminJevMiddlewares jevMiddlewares;
 
     /**
      * {@code agentCode -> ToolSourceInfo}：{@link #build} 每次重建都会覆盖写入，天然跟着
@@ -257,7 +260,8 @@ public class AdminAgentInstanceFactory {
                                       ObjectProvider<ModelRoutingPolicyRuntimeAccess> routingPolicyRuntimeAccessProvider,
                                       ObjectProvider<McpCredentialService> mcpCredentialServiceProvider,
                                       McpToolAuthorizationRegistry mcpToolAuthorizationRegistry,
-                                      SubjectToolAuthorizationMiddleware subjectToolAuthorizationMiddleware) {
+                                      SubjectToolAuthorizationMiddleware subjectToolAuthorizationMiddleware,
+                                      AdminJevMiddlewares jevMiddlewares) {
         this.indirectInjectionGuardMiddleware = indirectInjectionGuardMiddleware;
         this.taskRepository = taskRepository;
         this.workspaceManager = workspaceManager;
@@ -301,6 +305,7 @@ public class AdminAgentInstanceFactory {
             ? null : otelTracingMiddlewareProvider.getIfAvailable();
         this.mcpToolAuthorizationRegistry = mcpToolAuthorizationRegistry;
         this.subjectToolAuthorizationMiddleware = subjectToolAuthorizationMiddleware;
+        this.jevMiddlewares = jevMiddlewares;
     }
 
     /**
@@ -479,6 +484,10 @@ public class AdminAgentInstanceFactory {
         builder.middleware(new AgentTaskReplayCaptureMiddleware());
         // 主体授权必须在任何 MCP 工具真正执行前 fail closed；策略来自当前智能体绑定的 MCP 快照。
         builder.middleware(subjectToolAuthorizationMiddleware);
+        // Jev：情绪、意图、退款风险三个决策点跑影子模式——只判定并在时间线展示「线上会怎么做」，
+        // 不转人工、不收窄工具、不改模型输入，保证运营在后台看到的回复就是线上会给出的回复；
+        // 答复安全闸门真执行（拦「钱已到账」类表述并追加澄清）。各自的层级由顺序值决定，与这里的先后无关
+        jevMiddlewares.all().forEach(builder::middleware);
         builder.middleware(executionModeMiddleware);
         // 知识库检索注入：按 agentCode 现建一份（中间件需要知道"本智能体绑了哪些知识库"，构建期绑定
         // 比运行时反推更直接）。挂在这里=注入只影响每次模型调用的输入消息，不进持久化 AgentState，

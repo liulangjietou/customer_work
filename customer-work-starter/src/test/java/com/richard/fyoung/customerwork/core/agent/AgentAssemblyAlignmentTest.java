@@ -118,7 +118,9 @@ class AgentAssemblyAlignmentTest {
             "sensitiveWordMiddleware",            // 敏感词进出站过滤
             "maskingMiddleware",                  // 出站脱敏
             "promptInjectionGuardMiddleware",     // 直接注入防护
-            "indirectInjectionGuardMiddleware");  // 间接注入防护（工具/MCP 结果隔离）
+            "indirectInjectionGuardMiddleware",   // 间接注入防护（工具/MCP 结果隔离）
+            // Jev 决策（影子）与答复安全闸门：认的是挂载那一行而不是字段名——字段在不等于挂上了
+            "jevMiddlewares.all().forEach(builder::middleware)");
 
         List<String> missing = required.stream().filter(m -> !source.contains(m)).toList();
         assertTrue(missing.isEmpty(),

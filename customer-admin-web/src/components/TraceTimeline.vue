@@ -6,16 +6,22 @@ import {
   Connection,
   Cpu,
   DocumentChecked,
+  Guide,
   Loading,
   MagicStick,
   Tools,
   WarningFilled,
 } from '@element-plus/icons-vue'
 import {
+  DECISION_KIND,
   SUBAGENT_MARKER_KIND,
+  decisionScoreLabel,
+  decisionStatus,
+  parseDecision,
   parseToolResult,
   summarizeTrace,
   visibleTraceNodes,
+  type DecisionPayload,
   type ParsedToolResult,
   type TraceNode,
 } from '@/utils/traceTimeline'
@@ -47,6 +53,8 @@ const NODE_META: Record<string, { label: string; icon: Component; tone: string }
   answer: { label: '生成回答', icon: MagicStick, tone: 'answer' },
   stage_output: { label: '阶段输出', icon: DocumentChecked, tone: 'answer' },
   subagent_result: { label: '产出结果', icon: DocumentChecked, tone: 'result' },
+  // Jev 不是智能体：独立的图标与配色，和「思考中 / 调用工具」一眼能分开
+  [DECISION_KIND]: { label: 'Jev 决策', icon: Guide, tone: 'decision' },
 }
 
 function metaOf(kind: string) {
@@ -68,6 +76,7 @@ const summaryText = computed(() => {
   if (summary.value.stepCount > 0) parts.push(`${summary.value.stepCount} 个步骤`)
   if (summary.value.toolCount > 0) parts.push(`${summary.value.toolCount} 次工具`)
   if (summary.value.subagentCount > 0) parts.push(`${summary.value.subagentCount} 个子 Agent`)
+  if (summary.value.decisionCount > 0) parts.push(`${summary.value.decisionCount} 次 Jev 决策`)
   if (!props.active && summary.value.durationMs != null && summary.value.durationMs > 0) {
     parts.push(formatDuration(summary.value.durationMs))
   }
@@ -81,7 +90,15 @@ function isCurrentNode(index: number): boolean {
 }
 
 function shouldShowText(node: TraceNode): boolean {
-  return !!node.text && node.kind !== 'tool_result'
+  return !!node.text && node.kind !== 'tool_result' && node.kind !== DECISION_KIND
+}
+
+/** 决策节点不做增量合并、文本不会再变，按节点缓存解析结果，避免每次渲染重复解析 JSON。 */
+const decisionCache = new WeakMap<TraceNode, DecisionPayload | null>()
+
+function decisionOf(node: TraceNode): DecisionPayload | null {
+  if (!decisionCache.has(node)) decisionCache.set(node, parseDecision(node.text))
+  return decisionCache.get(node) ?? null
 }
 
 function toolResultOf(node: TraceNode): ParsedToolResult {
@@ -174,6 +191,45 @@ function toolResultPreview(node: TraceNode): string {
               </div>
             </div>
           </template>
+
+          <div v-else-if="node.kind === DECISION_KIND" class="trace-node-content jev-decision">
+            <template v-if="decisionOf(node)">
+              <div class="trace-node-heading">
+                <span class="jev-badge">Jev</span>
+                <strong>{{ decisionOf(node)!.title }}</strong>
+                <span class="jev-status" :class="`is-${decisionStatus(decisionOf(node)!).tone}`">
+                  {{ decisionStatus(decisionOf(node)!).label }}
+                </span>
+              </div>
+              <dl class="jev-card">
+                <div class="jev-row">
+                  <dt>判定</dt>
+                  <dd>{{ decisionOf(node)!.verdict }}</dd>
+                </div>
+                <div v-if="decisionOf(node)!.confidence != null" class="jev-row">
+                  <dt>{{ decisionScoreLabel(decisionOf(node)!.point) }}</dt>
+                  <dd class="jev-number">{{ decisionOf(node)!.confidence!.toFixed(2) }}</dd>
+                </div>
+                <div class="jev-row">
+                  <dt>{{ decisionStatus(decisionOf(node)!).actionLabel }}</dt>
+                  <dd>{{ decisionOf(node)!.action }}</dd>
+                </div>
+              </dl>
+              <p v-if="decisionOf(node)!.model" class="jev-meta">
+                {{ decisionOf(node)!.model
+                }}<template v-if="decisionOf(node)!.latencyMs != null">
+                  · {{ decisionOf(node)!.latencyMs }}ms</template
+                >
+              </p>
+            </template>
+            <!-- 载荷解析不了时原样展示，宁可难看也不能把一次决策吞掉 -->
+            <template v-else>
+              <div class="trace-node-heading">
+                <span class="jev-badge">Jev</span><strong>{{ metaOf(node.kind).label }}</strong>
+              </div>
+              <pre class="trace-text">{{ node.text }}</pre>
+            </template>
+          </div>
 
           <div v-else class="trace-node-content">
             <div class="trace-node-heading">
@@ -478,6 +534,102 @@ function toolResultPreview(node: TraceNode): string {
   max-height: 360px;
   overflow: auto;
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+}
+
+/* ---------- Jev 决策：琥珀色系，与智能体的主题色（思考/工具）明确区分 ---------- */
+.trace-item--decision {
+  --jev-accent: var(--el-color-warning);
+  --jev-soft: color-mix(in srgb, var(--jev-accent) 12%, transparent);
+  --jev-line: color-mix(in srgb, var(--jev-accent) 38%, var(--el-border-color));
+}
+
+.trace-item--decision .trace-node-icon {
+  color: var(--jev-accent);
+  background: color-mix(in srgb, var(--jev-accent) 8%, var(--el-bg-color));
+  border-color: var(--jev-line);
+}
+
+.jev-decision {
+  background: color-mix(in srgb, var(--jev-accent) 5%, var(--el-bg-color));
+  border: 1px dashed var(--jev-line);
+  border-radius: 8px;
+}
+
+.jev-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 1px 6px;
+  color: var(--el-color-white);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  background: var(--jev-accent);
+  border-radius: 4px;
+}
+
+.jev-status {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 2px 7px;
+  font-size: 11px;
+  border-radius: 999px;
+}
+
+.jev-status.is-shadow {
+  color: var(--el-text-color-secondary);
+  background: var(--el-fill-color);
+  border: 1px dashed var(--el-border-color);
+}
+
+.jev-status.is-executed {
+  color: var(--trace-success);
+  background: color-mix(in srgb, var(--trace-success) 12%, transparent);
+}
+
+.jev-status.is-idle {
+  color: var(--el-text-color-secondary);
+  background: var(--el-fill-color-light);
+}
+
+.jev-status.is-degraded {
+  color: var(--el-color-danger);
+  background: var(--el-color-danger-light-9);
+}
+
+.jev-card {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.jev-row {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.jev-row dt {
+  color: var(--el-text-color-secondary);
+}
+
+.jev-row dd {
+  margin: 0;
+  color: var(--el-text-color-regular);
+  word-break: break-word;
+}
+
+.jev-number {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+}
+
+.jev-meta {
+  margin: 6px 0 0;
+  color: var(--el-text-color-placeholder);
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 11px;
 }
 
 .subagent-panel {

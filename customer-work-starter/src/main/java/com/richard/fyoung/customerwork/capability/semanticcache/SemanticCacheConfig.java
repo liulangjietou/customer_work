@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.capability.semanticcache;
 
 import com.richard.fyoung.customerwork.capability.semanticcache.mapper.SemanticCacheMapper;
+import com.richard.fyoung.customerwork.capability.typesafe.JevDecisionService;
 import com.richard.fyoung.customerwork.core.agent.MultiAgentOrchestrator;
 import com.richard.fyoung.customerwork.core.constant.StoreModes;
 import com.richard.fyoung.customerwork.core.support.TenantResolver;
@@ -82,13 +83,16 @@ public class SemanticCacheConfig {
                                                      MultiAgentOrchestrator orchestrator,
                                                      TenantResolver tenantResolver,
                                                      CustomerWorkProperties properties,
-                                                     ObjectProvider<MeterRegistry> meterRegistryProvider) {
+                                                     ObjectProvider<MeterRegistry> meterRegistryProvider,
+                                                     ObjectProvider<JevDecisionService> jevProvider) {
         EmbeddingClient embeddingClient = embeddingProvider.getIfAvailable();
         if (properties.getSemanticCache().isEnabled() && embeddingClient == null) {
             log.error("semantic cache enabled but no EmbeddingClient available, errorCode={}",
                 "SEMCACHE-NO-EMBEDDING");
         }
-        return new SemanticCacheService(store, embeddingClient, orchestrator, tenantResolver,
-            properties.getSemanticCache(), meterRegistryProvider.getIfAvailable());
+        SemanticCacheService service = new SemanticCacheService(store, embeddingClient, orchestrator,
+            tenantResolver, properties.getSemanticCache(), meterRegistryProvider.getIfAvailable());
+        service.setJevDecisionService(jevProvider.getIfAvailable());
+        return service;
     }
 }

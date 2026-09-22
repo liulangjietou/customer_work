@@ -82,6 +82,10 @@ public class CustomerWorkProperties {
     @NestedConfigurationProperty
     private final MultiAgentProperties multiAgent = new MultiAgentProperties();
 
+    /** TypeSafe Jev 结构化决策模型接入（多 Agent 意图路由的中车道）。 */
+    @NestedConfigurationProperty
+    private final TypeSafeProperties typesafe = new TypeSafeProperties();
+
     /** 运行时与调度（优雅停机、定时维护）。 */
     @NestedConfigurationProperty
     private final RuntimeProperties runtime = new RuntimeProperties();

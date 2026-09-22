@@ -1,5 +1,9 @@
 package com.richard.fyoung.customerwork.capability.semanticcache;
 
+import com.richard.fyoung.customerwork.capability.typesafe.JevDecisionEvent;
+import com.richard.fyoung.customerwork.capability.typesafe.JevDecisionService;
+import com.richard.fyoung.customerwork.capability.typesafe.JevRunMode;
+import com.richard.fyoung.customerwork.capability.typesafe.NoulVerdict;
 import com.richard.fyoung.customerwork.core.agent.MultiAgentOrchestrator;
 import com.richard.fyoung.customerwork.core.support.TenantResolver;
 import com.richard.fyoung.customerwork.data.knowledge.VectorMath;
@@ -11,6 +15,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.StringUtils;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -59,6 +64,9 @@ public class SemanticCacheService implements RuntimeConfigCacheInvalidator {
     /** 向量序列化分隔符（与 admin 侧知识库向量列同一手法）。 */
     private static final String VECTOR_DELIMITER = ",";
 
+    /** 等 Jev 判定的兜底上限：调用方自带超时，这里只防自定义实现不收尾把线程挂死。 */
+    private static final long JEV_BLOCK_MARGIN_MS = 1000;
+
     private final SemanticCacheStore store;
 
     /** 可空：未配置 Embedding（缺 API Key）时整个缓存自动失效——没有向量就谈不上语义命中。 */
@@ -69,6 +77,8 @@ public class SemanticCacheService implements RuntimeConfigCacheInvalidator {
     private final SemanticCacheMetrics metrics;
     /** 每租户配置代际与切换锁；contentHash 不落 ThreadLocal，异步缓存写仍可校验发起时版本。 */
     private final Map<String, GenerationState> generationStates = new ConcurrentHashMap<>();
+    /** 可空：未开启 Jev 时只按意图白名单与个人标识正则判定。 */
+    private volatile JevDecisionService jevDecisionService;
 
     public SemanticCacheService(SemanticCacheStore store,
                                 EmbeddingClient embeddingClient,
@@ -94,6 +104,11 @@ public class SemanticCacheService implements RuntimeConfigCacheInvalidator {
         this.orchestrator = orchestrator;
         this.tenantResolver = tenantResolver;
         this.properties = properties;
+    }
+
+    /** 可选注入 Jev：走 setter 而非构造参数，两个既有构造在单测里被大量使用。 */
+    public void setJevDecisionService(JevDecisionService jevDecisionService) {
+        this.jevDecisionService = jevDecisionService;
     }
 
     /**
@@ -180,6 +195,10 @@ public class SemanticCacheService implements RuntimeConfigCacheInvalidator {
         withGeneration(generation, null, () -> {
             String intent = resolveIntent(question);
             if (!cacheable(question, intent) || containsPersonalIdentifier(answer)) {
+                return null;
+            }
+            // 排在 Embedding 之前：Jev 拒绝时连这次向量调用也省掉
+            if (jevRejects(question, answer)) {
                 return null;
             }
             String scopeId = tenantResolver.resolveDataScope(sessionId);
@@ -312,6 +331,38 @@ public class SemanticCacheService implements RuntimeConfigCacheInvalidator {
     /** 含 6 位以上连续数字即视为带个人标识（订单号/手机号/单据号）。 */
     boolean containsPersonalIdentifier(String text) {
         return StringUtils.hasText(text) && PERSONAL_IDENTIFIER.matcher(text).find();
+    }
+
+    /**
+     * Jev 语义判定：这组问答是否只适用于特定用户。
+     *
+     * <p><b>只收紧不放宽</b>：只在正则已经放行之后才问，Jev 只能额外拒绝写入。
+     * 正则判不出的「我那个耳机什么时候到」（没有数字、但显然是个人问题）正是它要补的。</p>
+     *
+     * <p>Jev 未开启、超时、熔断或出错一律返回 false（不额外拒绝），行为与未接入时相同。
+     * 本方法跑在异步写缓存的旁路线程上，等待不影响用户拿到答案。</p>
+     */
+    boolean jevRejects(String question, String answer) {
+        JevDecisionService jev = jevDecisionService;
+        if (jev == null || !jev.properties().getCacheGuard().isEnabled()) {
+            return false;
+        }
+        try {
+            Optional<NoulVerdict> verdict = jev.judgePersonalContext(question, answer)
+                .blockOptional(Duration.ofMillis(jev.properties().getTimeoutMs() + JEV_BLOCK_MARGIN_MS));
+            if (verdict.isEmpty()) {
+                jev.recordDecision(JevDecisionEvent.POINT_CACHE_GUARD, JevDecisionEvent.RESULT_DEGRADED, JevRunMode.LIVE);
+                return false;
+            }
+            boolean rejected = verdict.get().atLeast(jev.properties().getCacheGuard().getMaxProbability());
+            jev.recordDecision(JevDecisionEvent.POINT_CACHE_GUARD, rejected ? JevDecisionEvent.RESULT_REJECTED : JevDecisionEvent.RESULT_ALLOWED, JevRunMode.LIVE);
+            return rejected;
+        } catch (Exception e) {
+            log.error("semantic cache jev guard failed, falling back to regex only, errorCode={}",
+                "SEMCACHE-JEV-GUARD-FAIL", e);
+            jev.recordDecision(JevDecisionEvent.POINT_CACHE_GUARD, JevDecisionEvent.RESULT_DEGRADED, JevRunMode.LIVE);
+            return false;
+        }
     }
 
     /**

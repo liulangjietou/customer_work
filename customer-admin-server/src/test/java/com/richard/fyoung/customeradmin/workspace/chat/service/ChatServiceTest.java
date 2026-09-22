@@ -1,6 +1,8 @@
 package com.richard.fyoung.customeradmin.workspace.chat.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.richard.fyoung.customerwork.capability.typesafe.JevDecisionEvent;
+import com.richard.fyoung.customerwork.capability.typesafe.JevRunMode;
 import io.agentscope.core.message.GenerateReason;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
@@ -451,6 +453,44 @@ class ChatServiceTest {
             assertNull(chunk.source(), "父 Agent 片段 source 应为 null，实际=" + chunk);
             assertNull(chunk.subagentName(), "父 Agent 片段 subagentName 应为 null，实际=" + chunk);
         }
+    }
+
+    // ===== Jev 决策：与智能体自身的思考分开展示 =====
+
+    /**
+     * Jev 的决策必须是独立的节点类型，不能混进 THINKING 或 ANSWER——
+     * 否则运营分不清哪一步是模型自己想的、哪一步是 Jev 判的。
+     */
+    @Test
+    void chatStream_jevDecision_shouldBecomeDistinctDecisionNode() throws Exception {
+        stubEvents(
+            JevDecisionEvent.decided(JevRunMode.SHADOW, JevDecisionEvent.POINT_ESCALATION, "情绪升级判定", "最可能：强烈愤怒",
+                "直接转人工坐席", false, 0.93, "jev-1.13.0", 42),
+            new TextBlockDeltaEvent(REPLY_ID, "text", "非常抱歉给您带来不便"));
+
+        List<ChatStreamChunk> chunks = stream("我要投诉");
+
+        assertKinds(chunks, ChatNodeKind.THINKING_START, ChatNodeKind.DECISION, ChatNodeKind.ANSWER,
+            ChatNodeKind.THINKING_END);
+        assertEquals("node:decision", chunks.get(1).kind().sseEventName());
+        var payload = new ObjectMapper().readTree(chunks.get(1).text());
+        assertEquals(JevDecisionEvent.POINT_ESCALATION, payload.path(JevDecisionEvent.KEY_POINT).asText());
+        assertEquals("直接转人工坐席", payload.path(JevDecisionEvent.KEY_ACTION).asText());
+        assertFalse(payload.path(JevDecisionEvent.KEY_EXECUTED).asBoolean(), "影子模式的决策应标明未执行");
+        assertEquals("shadow", payload.path(JevDecisionEvent.KEY_RUN_MODE).asText(), "前端据此区分影子与真执行");
+        assertEquals(0.93, payload.path(JevDecisionEvent.KEY_CONFIDENCE).asDouble());
+        assertEquals("非常抱歉给您带来不便", chunks.get(2).text(), "决策节点不能吞掉或改动正文");
+    }
+
+    /** 子 Agent 的输入是父 Agent 派发的任务描述，不是用户原话，拿它判情绪与意图只会误导。 */
+    @Test
+    void chatStream_subagentJevDecision_shouldNotBeShown() {
+        stubEvents(sourced(JevDecisionEvent.decided(JevRunMode.SHADOW, JevDecisionEvent.POINT_TOOL_SCOPE, "意图识别 · 工具收窄",
+            "意图：other", "不收窄", false, 0.5, "jev-1.13.0", 10)));
+
+        List<ChatStreamChunk> chunks = stream("帮我写文档");
+
+        assertTrue(chunks.stream().noneMatch(chunk -> chunk.kind() == ChatNodeKind.DECISION), chunks.toString());
     }
 
     @Test

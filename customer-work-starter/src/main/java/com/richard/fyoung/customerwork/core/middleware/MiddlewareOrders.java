@@ -98,6 +98,14 @@ public final class MiddlewareOrders {
     /** 工具级人工确认。 */
     public static final int HUMAN_APPROVAL = 115;
 
+    /**
+     * Jev 退款风险判定：高风险时额外转人工。
+     *
+     * <p>紧挨工具级人工确认的内侧，语义上是审批的增强；排在主体授权之内，
+     * 授权拒绝时退款根本不会发生，也就不必去判风险。它只旁路判定，从不拦截或改写工具调用。</p>
+     */
+    public static final int JEV_REFUND_RISK = 112;
+
     /** 工具入参护栏：公共参数注入、数值钳制、破坏性命令改写。 */
     public static final int TOOL_GUARD = 110;
 
@@ -123,8 +131,24 @@ public final class MiddlewareOrders {
 
     // ---------- 上下文组装（靠近模型） ----------
 
+    /**
+     * Jev 情绪升级判定：两段式转人工，并往本轮推理注入对应提示。
+     *
+     * <p>属于对话控制，排在阶段提示词与知识注入之前：「已为用户转接人工」这类事实
+     * 应当先于其它上下文确定下来。</p>
+     */
+    public static final int JEV_ESCALATION = 90;
+
     /** 按对话阶段动态组装系统提示词。 */
     public static final int DIALOG_STAGE = 80;
+
+    /**
+     * Jev 意图判定：收窄本轮模型看得到的工具面。
+     *
+     * <p><b>必须在上下文预算之外</b>：工具 schema 本身就占上下文，先收窄、预算才按收窄后的
+     * 工具面计算；排在预算之内的话，预算会按收窄前的工具多裁掉一截对话消息。</p>
+     */
+    public static final int JEV_TOOL_SCOPE = 75;
 
     /** RAG 知识的瞬态注入。 */
     public static final int KNOWLEDGE_INJECTION = 70;

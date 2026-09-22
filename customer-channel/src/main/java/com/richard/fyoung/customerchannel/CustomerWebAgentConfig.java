@@ -1,12 +1,17 @@
 package com.richard.fyoung.customerchannel;
 
 import com.richard.fyoung.customerwork.capability.dialog.DialogStageService;
+import com.richard.fyoung.customerwork.capability.typesafe.JevDecisionService;
+import com.richard.fyoung.customerwork.capability.typesafe.TypeSafeConfiguration;
 import com.richard.fyoung.customerwork.core.middleware.AuditMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.ChatTerminalCaptureMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.ContextBudgetMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.DialogStageMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.DynamicOptionsMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.IndirectInjectionGuardMiddleware;
+import com.richard.fyoung.customerwork.core.middleware.JevEscalationMiddleware;
+import com.richard.fyoung.customerwork.core.middleware.JevRefundRiskMiddleware;
+import com.richard.fyoung.customerwork.core.middleware.JevToolScopeMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.KnowledgeCitationMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.LatencyMiddleware;
 import com.richard.fyoung.customerwork.core.middleware.MaskingMiddleware;
@@ -49,6 +54,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
 
 /**
  * customer-channel 的 Agent 集成配置：复用 customer-work 的客服 Agent 能力，把 Agent / Model / Toolkit /
@@ -61,6 +67,7 @@ import org.springframework.context.annotation.Configuration;
  */
 @Configuration
 @EnableConfigurationProperties(CustomerWorkProperties.class)
+@Import(TypeSafeConfiguration.class)
 public class CustomerWebAgentConfig {
 
     private static final Logger log = LoggerFactory.getLogger(CustomerWebAgentConfig.class);
@@ -170,9 +177,36 @@ public class CustomerWebAgentConfig {
             CustomerWorkProperties properties,
             ObjectProvider<com.richard.fyoung.customerwork.capability.handoff.HandoffService> handoffProvider,
             ObjectProvider<AuditSink> auditSinkProvider,
-            ObjectProvider<MeterRegistry> meterRegistryProvider) {
+            ObjectProvider<MeterRegistry> meterRegistryProvider,
+            ObjectProvider<JevDecisionService> jevProvider) {
         return new SelfCorrectionMiddleware(properties, handoffProvider,
-            auditSinkProvider, meterRegistryProvider);
+            auditSinkProvider, meterRegistryProvider, jevProvider);
+    }
+
+    /*
+     * Jev 决策中间件：本模块不扫描 starter 的 @Component，必须在这里显式声明，
+     * 否则 AgentGovernanceAssembler 取不到它们，渠道链路会是七条链路里唯一没接 Jev 的那条。
+     * 渠道容器里没有 HandoffService：情绪升级会退回「提示模型」，退款风险只记指标不转人工，
+     * 与本模块「转人工交给渠道自身的人工接入流程」的约定一致。Jev 未开启时三者都原样透传。
+     */
+
+    @Bean
+    public JevEscalationMiddleware jevEscalationMiddleware(
+            ObjectProvider<JevDecisionService> jevProvider,
+            ObjectProvider<com.richard.fyoung.customerwork.capability.handoff.HandoffService> handoffProvider) {
+        return new JevEscalationMiddleware(jevProvider, handoffProvider);
+    }
+
+    @Bean
+    public JevToolScopeMiddleware jevToolScopeMiddleware(ObjectProvider<JevDecisionService> jevProvider) {
+        return new JevToolScopeMiddleware(jevProvider);
+    }
+
+    @Bean
+    public JevRefundRiskMiddleware jevRefundRiskMiddleware(
+            ObjectProvider<JevDecisionService> jevProvider,
+            ObjectProvider<com.richard.fyoung.customerwork.capability.handoff.HandoffService> handoffProvider) {
+        return new JevRefundRiskMiddleware(jevProvider, handoffProvider);
     }
 
     /** 任务清单采集：把智能体列出的多步计划带给用户看。 */

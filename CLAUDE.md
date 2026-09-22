@@ -21,6 +21,20 @@
 
 ## 构建与测试（关键坑，全部实测踩过）
 
+- 2026-09-21 TypeSafe Jev 接入批次（无迁移，客服端仍从 **V31**、Admin 仍从 **V114** 核对）：全模块
+  BUILD SUCCESS，starter 2264/9 skip、app-server 302、customer-channel 82、admin 2283/1 skip、gateway 1，
+  **合计 4932**（排除 `RedisSessionPersistenceTest`）。开关 `customer-work.typesafe.enabled` 默认关，
+  Key 走 `CUSTOMER_WORK_TYPESAFE_API_KEY`；admin 与客服端读同一组键（影子判定必须与线上一致）。四条经验：
+  ① **Jev 的 Score 返回的 `score` 是浮点期望值（如 2.95），不是整数档位**，判「是否最高档」要看概率最大的档位，
+  按 `score == 最高档` 写自动转人工永远不触发；Noul 没有 confidence 字段；
+  ② **中间件的判定链路必须恰好产出一个元素**：`Mono.fromCallable` 返回 null 变空流会让下游永不调用（整轮无回复），
+  用 `switchIfEmpty(next)` 兜底则在下游返回空流时让 Agent 执行两遍——`JevMiddlewareRobustnessTest` 对每种 Jev
+  表现断言下游恰好一次；
+  ③ **决策事件（`CustomEvent`）只由后台实例发出**：starter 自动装配给 C 端的中间件一律 `JevRunMode.LIVE`，
+  从源头不产生，而不是在 WS/流式/AG-UI 各出口逐个过滤；
+  ④ **本机 `mysql_db_low_case` / `minio-server` 容器停了会伪装成 admin 十几个验收测试 Error**
+  （`CommunicationsException` / `Connection refused :9000`），starter skip 也会从个位数跳到 100+，先 `docker start` 再判回归。
+
 - 2026-09-15 Badcase 与词表批量操作批次新增客服端 **V30**，仅将敏感词表租户身份列改为
   `utf8mb4_bin`，保持词面原排序规则，避免大小写不同租户在唯一键处冲突。下一客服迁移从 **V31**
   核对；Admin 保持 V113，下一从 **V114** 核对。存量升级、镜像与完整回归状态见
