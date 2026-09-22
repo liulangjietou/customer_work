@@ -21,7 +21,8 @@
 
 ## 构建与测试（关键坑，全部实测踩过）
 
-- 2026-09-21 TypeSafe Jev 接入批次（无迁移，客服端仍从 **V31**、Admin 仍从 **V114** 核对）：全模块
+- 2026-09-21 TypeSafe Jev 接入批次（无迁移，客服端仍从 **V31**、Admin 从 **V115** 核对——
+  **V114 已被 PR #235 用掉**，此处初稿误写为 V114）：全模块
   BUILD SUCCESS，starter 2264/9 skip、app-server 302、customer-channel 82、admin 2283/1 skip、gateway 1，
   **合计 4932**（排除 `RedisSessionPersistenceTest`）。开关 `customer-work.typesafe.enabled` 默认关，
   Key 走 `CUSTOMER_WORK_TYPESAFE_API_KEY`；admin 与客服端读同一组键（影子判定必须与线上一致）。四条经验：
