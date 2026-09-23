@@ -4,11 +4,11 @@
 > 四个方面：线程切换、上下文传播、流的终止语义，以及测试是否真的能暴露问题。本期题目都来自项目里踩过的真实问题，
 > 能把原理和现象对上的候选人不多。
 >
-> 对应 JD：Java 并发、Spring WebFlux / Reactor、Redis 分布式锁、单元测试能力。题量 7（初 1 / 中 4 / 高 2）。
+> 对应 JD：Java 并发、Spring WebFlux / Reactor、Redis 分布式锁、单元测试能力。题量 7。
 
 ---
 
-### Q1【初级】Reactor 里 `subscribeOn` 和 `publishOn` 有什么区别？项目在哪些地方用了它们，为什么？
+### Q1 Reactor 里 `subscribeOn` 和 `publishOn` 有什么区别？项目在哪些地方用了它们，为什么？
 
 **考察点**：Reactor 的线程模型；不能阻塞 Netty 事件循环。
 
@@ -37,7 +37,7 @@ Reactor 的默认上限是 CPU 核数 × 10 个线程，每个线程的任务队
 
 ---
 
-### Q2【中级】ThreadLocal 在响应式链路里为什么会丢失？项目是怎么把租户上下文传到 MyBatis 拦截器里的？
+### Q2 ThreadLocal 在响应式链路里为什么会丢失？项目是怎么把租户上下文传到 MyBatis 拦截器里的？
 
 **考察点**：ThreadLocal 和 Reactor Context 各自的适用场景；上下文自动传播机制；这套机制的性能代价。
 
@@ -68,7 +68,7 @@ MyBatis-Plus 的 `clearIgnoreStrategy()` 会无条件清除忽略策略。内层
 
 ---
 
-### Q3【中级】热 Agent 缓存用 `LinkedHashMap` 实现了 LRU。这个实现有哪些细节？有没有潜在的性能问题？
+### Q3 热 Agent 缓存用 `LinkedHashMap` 实现了 LRU。这个实现有哪些细节？有没有潜在的性能问题？
 
 **考察点**：集合框架的基本功；同步容器的锁粒度；资源释放。
 
@@ -94,7 +94,7 @@ MyBatis-Plus 的 `clearIgnoreStrategy()` 会无条件清除忽略策略。内层
 
 ---
 
-### Q4【高级】流式对话的错误处理：`doOnComplete` 和 `doFinally`、`switchIfEmpty` 和 `defaultIfEmpty` 分别该怎么选？
+### Q4 流式对话的错误处理：`doOnComplete` 和 `doFinally`、`switchIfEmpty` 和 `defaultIfEmpty` 分别该怎么选？
 
 **考察点**：Reactor 的终止信号语义；“下游必须恰好被调用一次”这个不变量。
 
@@ -122,7 +122,7 @@ MyBatis-Plus 的 `clearIgnoreStrategy()` 会无条件清除忽略策略。内层
 
 ---
 
-### Q5【中级】会话锁为什么用 Redisson 的 `RPermitExpirableSemaphore`，而不用 `RLock`？
+### Q5 会话锁为什么用 Redisson 的 `RPermitExpirableSemaphore`，而不用 `RLock`？
 
 **考察点**：分布式锁和线程的绑定关系；租约时长；锁服务故障时怎么降级。
 
@@ -146,7 +146,7 @@ MyBatis-Plus 的 `clearIgnoreStrategy()` 会无条件清除忽略策略。内层
 
 ---
 
-### Q6【中级】单元测试里有哪些陷阱会导致断言“恒为真”？请举项目里的例子。
+### Q6 单元测试里有哪些陷阱会导致断言“恒为真”？请举项目里的例子。
 
 **考察点**：测试有没有效；能不能用变异测试检验断言。
 
@@ -171,7 +171,7 @@ MyBatis-Plus 的 `clearIgnoreStrategy()` 会无条件清除忽略策略。内层
 
 ---
 
-### Q7【高级】两个“编译能通过，但能力被悄悄丢掉”的坑：接口的 default 方法遇上装饰器，继承遇上防御性拷贝。
+### Q7 两个“编译能通过，但能力被悄悄丢掉”的坑：接口的 default 方法遇上装饰器，继承遇上防御性拷贝。
 
 **考察点**：Java 语言机制的细节；组合与继承带来的隐性风险。
 
