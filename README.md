@@ -578,7 +578,7 @@ Roadmap 按风险与验收出口排序，不承诺未经评估的日期，也不
 | 框架 open issues 与本项目链路的交叉评估 | [docs/生产就绪评估.md](docs/生产就绪评估.md) |
 | 五套官方前端能力接入（8081 演示模块） | [docs/customer-channel操作文档.md](docs/customer-channel操作文档.md) |
 | AI 编码助手需求与实施路线 | [docs/AI编码助手需求文档.md](docs/AI编码助手需求文档.md) |
-| Agent 开发岗面试题（按本项目实现出题，含参考答案与追问） | [docs/interview/README.md](docs/interview/README.md) |
+| Agent 开发岗面试题库（项目实战、通用八股文、高级 / 资深进阶三篇，含参考答案与追问） | [docs/interview/README.md](docs/interview/README.md) · [全库索引](docs/interview/INDEX.md) |
 | 版本变化与兼容性 | [CHANGELOG.md](CHANGELOG.md) |
 | 贡献流程与安全报告 | [CONTRIBUTING.md](CONTRIBUTING.md) · [SECURITY.md](SECURITY.md) |
 
