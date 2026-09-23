@@ -10,9 +10,12 @@ import io.agentscope.core.event.AgentEvent;
 import io.agentscope.core.event.AgentResultEvent;
 import io.agentscope.core.event.ExceedMaxItersEvent;
 import io.agentscope.core.event.TextBlockDeltaEvent;
+import io.agentscope.core.event.TextBlockEndEvent;
+import io.agentscope.core.event.TextBlockStartEvent;
 import io.agentscope.core.event.ToolCallDeltaEvent;
 import io.agentscope.core.event.ToolCallEndEvent;
 import io.agentscope.core.event.ToolCallStartEvent;
+import io.agentscope.core.message.ContentBlock;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
@@ -24,11 +27,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.function.Function;
 
 /**
@@ -51,6 +58,12 @@ import java.util.function.Function;
  * {@code onActing} 与 {@code onAgent} 之间共享状态——那要靠 Reactor Context 跨方法传播，
  * 而「框架对 {@code onActing} 的调用是否落在本方法的 next 链上」是个不该依赖的假设。</p>
  *
+ * <h3>去向说明要补两处</h3>
+ * <p>只改 {@link AgentResultEvent} 在流式路径上是假性生效：用户端（WS / SSE，以及复用流式内核的同步接口）
+ * 与 AG-UI 只把 {@link TextBlockDeltaEvent} 推给前端，拿到过正文就不再看最终结果；而框架的收尾回复
+ * 本身就是逐片流式发出的。因此说明既以增量补进收尾文本块，也追加在最终结果上——两类消费方各看各的事件，
+ * 各自恰好看到一次。与 {@code SelfCorrectionMiddleware} 注释里记下的是同一个坑。</p>
+ *
  * <h3>重复调用为什么只告警不拦截</h3>
  * <p>拦下重复调用需要让模型知道「别再这样调了」，而中间件改事件流<b>改不了写回
  * {@code AgentState}、下一轮喂给模型的内容</b>（{@code IndirectInjectionGuardMiddleware}
@@ -71,10 +84,14 @@ public class LoopGuardMiddleware implements MiddlewareBase {
     private static final String M_REPEATED = "customerwork.agent.toolcall.repeated";
     private static final String AUDIT_EXHAUSTED = "agent-iters-exhausted";
     private static final String AUDIT_REPEATED = "agent-tool-call-repeated";
+    /** 单独补发说明时所用文本块的标识：与框架自己的块区分开，外层按块缓冲的中间件不会把它与别的块混在一起。 */
+    private static final String NOTICE_BLOCK_ID = "loop-guard-notice";
 
     private final boolean enabled;
     private final int repeatedThreshold;
     private final String exhaustedNotice;
+    /** 说明配成空白即表示不追加，两处补发都据此跳过。 */
+    private final boolean noticeEnabled;
     private final boolean handoffOnExhausted;
     private final ObjectProvider<HandoffService> handoffProvider;
     private final AuditSink auditSink;
@@ -88,6 +105,7 @@ public class LoopGuardMiddleware implements MiddlewareBase {
         this.enabled = cfg.isEnabled();
         this.repeatedThreshold = Math.max(2, cfg.getRepeatedToolCallThreshold());
         this.exhaustedNotice = cfg.getExhaustedNotice();
+        this.noticeEnabled = StringUtils.hasText(exhaustedNotice);
         this.handoffOnExhausted = cfg.isHandoffOnExhausted();
         this.handoffProvider = handoffProvider;
         this.auditSink = auditSinkProvider.getIfAvailable();
@@ -126,8 +144,22 @@ public class LoopGuardMiddleware implements MiddlewareBase {
                 onExhausted(agent, ctx, exceeded, state);
                 return Flux.just(event);
             }
-            if (state.exhausted) {
-                return Flux.just(appendNotice(event, state));
+            if (event instanceof TextBlockStartEvent blockStart) {
+                state.openTextBlock = blockStart;
+                return Flux.just(event);
+            }
+            if (event instanceof TextBlockDeltaEvent textDelta) {
+                if (StringUtils.hasLength(textDelta.getDelta())) {
+                    state.textStreamed = true;
+                }
+                return Flux.just(event);
+            }
+            if (event instanceof TextBlockEndEvent blockEnd) {
+                state.openTextBlock = null;
+                return streamNoticeBeforeBlockEnd(blockEnd, state);
+            }
+            if (event instanceof AgentResultEvent result && state.exhausted) {
+                return appendNotice(result, state);
             }
             return Flux.just(event);
         } catch (Exception e) {
@@ -188,26 +220,82 @@ public class LoopGuardMiddleware implements MiddlewareBase {
     }
 
     /**
-     * 把「已转人工」这句话追加到收尾回复上。
+     * 流式消费方看到的说明：补进收尾文本块，赶在它结束之前。
      *
-     * <p>框架此时已经在生成 summary，追加而不是替换：那段话里可能有对用户有用的中间结论，
-     * 整段丢掉等于把十轮的成果一起扔了。</p>
+     * <p>轮次用尽之后框架只剩一次模型调用——生成收尾回复——它的文本块就是本轮最后一个文本块。
+     * 必须补在块结束之前：结束之后再往同一块追加，AG-UI 会收到已结束消息的内容；外层敏感词过滤按块缓冲、
+     * 块结束才放行尾巴，也等不到下一次放行。补在同一块里还有一层好处：AG-UI 落库只取最后一条消息，
+     * 另起一块会让历史里只剩说明、丢了收尾正文。</p>
      */
-    private AgentEvent appendNotice(AgentEvent event, TurnState state) {
-        if (state.noticeSent || exhaustedNotice == null || exhaustedNotice.isBlank()) {
-            return event;
+    private Flux<AgentEvent> streamNoticeBeforeBlockEnd(TextBlockEndEvent blockEnd, TurnState state) {
+        if (!state.exhausted || state.noticeStreamed || !noticeEnabled) {
+            return Flux.just(blockEnd);
         }
-        if (event instanceof AgentResultEvent result) {
-            state.noticeSent = true;
-            Msg msg = result.getResult();
-            String text = msg == null || msg.getTextContent() == null ? "" : msg.getTextContent();
-            return new AgentResultEvent(Msg.builder()
-                .role(msg == null || msg.getRole() == null ? MsgRole.ASSISTANT : msg.getRole())
-                .name(msg == null ? null : msg.getName())
-                .content(TextBlock.builder().text(text + exhaustedNotice).build())
-                .build());
+        state.noticeStreamed = true;
+        return Flux.just(
+            new TextBlockDeltaEvent(blockEnd.getReplyId(), blockEnd.getBlockId(), exhaustedNotice), blockEnd);
+    }
+
+    /**
+     * 只读最终结果的消费方（{@code call()}：IM 渠道、评测、多专家）看到的说明：追加到收尾回复上。
+     *
+     * <p>框架此时已经生成了收尾，追加而不是替换：那段话里可能有对用户有用的中间结论，
+     * 整段丢掉等于把十轮的成果一起扔了。也不重建消息：框架标在上面的 {@code MAX_ITERATIONS}
+     * 要原样交给外层的终止采集，前端据此显示「答复尚未完成」，重建会把它抹成正常结束。</p>
+     *
+     * <p>收尾没能正常结束一个文本块（模型调用失败）、而用户此前又已收到过正文时，流式消费方不会再看
+     * 最终结果，这里在它之前把说明补上。一个正文增量都没出过则不补：流式消费方会用最终结果补全文，
+     * 说明已经在里面了。</p>
+     */
+    private Flux<AgentEvent> appendNotice(AgentResultEvent result, TurnState state) {
+        if (state.resultRewritten || !noticeEnabled) {
+            return Flux.just(result);
         }
-        return event;
+        state.resultRewritten = true;
+        AgentResultEvent rewritten = new AgentResultEvent(withNotice(result.getResult()));
+        if (state.noticeStreamed || !state.textStreamed) {
+            return Flux.just(rewritten);
+        }
+        state.noticeStreamed = true;
+        return noticeBlock(state).concatWith(Flux.just(rewritten));
+    }
+
+    /**
+     * 收尾没有正常结束的文本块时补发说明。
+     *
+     * <p>收尾模型中途失败时框架已经发出块开始与部分正文，却再也不会发块结束——说明补进这个悬空的块并替它结束，
+     * 另起新块会让它永远不结束。收尾一个字都没吐时才单独起一个完整的块。</p>
+     */
+    private Flux<AgentEvent> noticeBlock(TurnState state) {
+        TextBlockStartEvent dangling = state.openTextBlock;
+        if (dangling != null) {
+            state.openTextBlock = null;
+            return Flux.just(
+                new TextBlockDeltaEvent(dangling.getReplyId(), dangling.getBlockId(), exhaustedNotice),
+                new TextBlockEndEvent(dangling.getReplyId(), dangling.getBlockId()));
+        }
+        String replyId = UUID.randomUUID().toString().replace("-", "");
+        return Flux.just(
+            new TextBlockStartEvent(replyId, NOTICE_BLOCK_ID),
+            new TextBlockDeltaEvent(replyId, NOTICE_BLOCK_ID, exhaustedNotice),
+            new TextBlockEndEvent(replyId, NOTICE_BLOCK_ID));
+    }
+
+    /** 说明接在最后一个文本块之后；消息身份、元数据与其余内容块原样保留。 */
+    private Msg withNotice(Msg msg) {
+        if (msg == null) {
+            return Msg.builder().role(MsgRole.ASSISTANT)
+                .content(TextBlock.builder().text(exhaustedNotice).build()).build();
+        }
+        List<ContentBlock> content = new ArrayList<>(msg.getContent());
+        for (int i = content.size() - 1; i >= 0; i--) {
+            if (content.get(i) instanceof TextBlock last) {
+                content.set(i, TextBlock.builder().text(last.getText() + exhaustedNotice).build());
+                return msg.withContent(content);
+            }
+        }
+        content.add(TextBlock.builder().text(exhaustedNotice).build());
+        return msg.withContent(content);
     }
 
     private void handoff(String sessionId, int maxIters) {
@@ -262,7 +350,12 @@ public class LoopGuardMiddleware implements MiddlewareBase {
         private final Map<String, StringBuilder> arguments = new HashMap<>();
         private final Map<String, Integer> callCounts = new HashMap<>();
         private boolean exhausted;
-        private boolean noticeSent;
+        /** 本轮是否流出过非空正文：流式消费方据此决定还看不看最终结果。 */
+        private boolean textStreamed;
+        /** 已开始、尚未结束的文本块；收尾模型中途失败时它会一直悬空。 */
+        private TextBlockStartEvent openTextBlock;
+        private boolean noticeStreamed;
+        private boolean resultRewritten;
     }
 
     /** 顺序契约见 {@link MiddlewareOrders}：观测整轮，需看到工具调用与最终结果。 */

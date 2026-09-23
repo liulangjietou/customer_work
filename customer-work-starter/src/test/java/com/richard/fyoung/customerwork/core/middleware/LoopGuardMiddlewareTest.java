@@ -7,9 +7,15 @@ import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
 import io.agentscope.core.event.AgentResultEvent;
 import io.agentscope.core.event.ExceedMaxItersEvent;
+import io.agentscope.core.event.ModelCallEndEvent;
+import io.agentscope.core.event.ModelCallStartEvent;
+import io.agentscope.core.event.TextBlockDeltaEvent;
+import io.agentscope.core.event.TextBlockEndEvent;
+import io.agentscope.core.event.TextBlockStartEvent;
 import io.agentscope.core.event.ToolCallDeltaEvent;
 import io.agentscope.core.event.ToolCallEndEvent;
 import io.agentscope.core.event.ToolCallStartEvent;
+import io.agentscope.core.message.GenerateReason;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
@@ -24,6 +30,8 @@ import reactor.core.publisher.Flux;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -43,6 +51,9 @@ import static org.mockito.Mockito.when;
  * @author owlzhangfq@gmail.com
  */
 class LoopGuardMiddlewareTest {
+
+    private static final String NOTICE =
+        new CustomerWorkProperties().getHooks().getLoopGuard().getExhaustedNotice();
 
     private HandoffService handoffService;
     private AuditSink auditSink;
@@ -134,16 +145,122 @@ class LoopGuardMiddlewareTest {
     @Test
     @DisplayName("正常一轮完全透传，不产生任何告警与转人工")
     void passesThroughNormalTurn() {
-        List<AgentEvent> events = new ArrayList<>(toolCall("c1", "queryOrder", "{\"orderId\":\"SO-1\"}"));
+        List<AgentEvent> events = new ArrayList<>(reasoningRound("r1"));
+        events.add(new ModelCallStartEvent("r2"));
+        events.add(new TextBlockStartEvent("r2", "text"));
+        events.add(new TextBlockDeltaEvent("r2", "text", "您的订单正在配送中。"));
+        events.add(new TextBlockEndEvent("r2", "text"));
+        events.add(new ModelCallEndEvent("r2", null));
         events.add(new AgentResultEvent(msg("您的订单正在配送中。")));
 
         List<AgentEvent> out = run(Flux.fromIterable(events));
 
-        AgentResultEvent result = (AgentResultEvent) out.get(out.size() - 1);
-        assertEquals("您的订单正在配送中。", result.getResult().getTextContent(),
-            "正常回复不该被追加任何提示");
+        assertEquals(events, out, "正常一轮的事件应原样透传，不补任何增量：" + types(out));
         verify(handoffService, never()).create(anyString(), anyString());
         verify(auditSink, never()).record(anyString(), anyMap());
+    }
+
+    /**
+     * 流式消费方（用户端 WS / SSE、AG-UI）只渲染正文增量，拿到过增量就不再看最终结果；
+     * 而框架的收尾回复本身是逐片流式发出的。说明因此必须以增量出现在收尾文本块里，
+     * 而且要在块结束<b>之前</b>：结束之后再往同一块追加，AG-UI 会收到已结束消息的内容，
+     * 外层按块缓冲的敏感词过滤也等不到下一次放行。
+     */
+    @Test
+    @DisplayName("流式收尾：说明作为增量补进收尾文本块、赶在块结束之前，且只补一次")
+    void streamsNoticeInsideSummaryBlockBeforeItEnds() {
+        List<AgentEvent> out = run(Flux.fromIterable(exhaustedTurn()));
+
+        int blockEnd = indexOf(out, e -> e instanceof TextBlockEndEvent end && "r2".equals(end.getReplyId()));
+        assertTrue(out.get(blockEnd - 1) instanceof TextBlockDeltaEvent delta
+                && NOTICE.equals(delta.getDelta()) && "r2".equals(delta.getReplyId())
+                && "text".equals(delta.getBlockId()),
+            "说明应是收尾文本块结束前的最后一个增量：" + types(out));
+        assertEquals(1, noticeDeltas(out), "同一轮只能补一次：" + types(out));
+        assertEquals(2, count(out, TextBlockStartEvent.class), "不应另起文本块：" + types(out));
+    }
+
+    /**
+     * 只读最终结果的消费方看不到增量，最终结果必须照样带上说明；
+     * 且只能追加文本，不能重建消息——框架标在上面的结束原因要原样留给外层的终止采集，前端据此显示答复状态。
+     */
+    @Test
+    @DisplayName("最终结果追加说明时保留框架标的结束原因与消息身份")
+    void rewrittenResultKeepsFrameworkMetadata() {
+        List<AgentEvent> out = run(Flux.fromIterable(exhaustedTurn()));
+
+        Msg result = ((AgentResultEvent) out.get(out.size() - 1)).getResult();
+        assertEquals("抱歉，没能处理好。" + NOTICE, result.getTextContent());
+        assertEquals(GenerateReason.MAX_ITERATIONS, result.getGenerateReason(), "结束原因不能被改写成正常结束");
+        assertEquals("summary-msg", result.getId());
+        assertEquals("assistant", result.getName());
+    }
+
+    /**
+     * 收尾模型中途失败：框架已发出块开始与部分增量，却再也不会发块结束。
+     * 说明补进这个悬空的块并替它收尾——另起新块会让它永远不结束，AG-UI 的消息就一直处于打开状态。
+     */
+    @Test
+    @DisplayName("收尾中途失败：说明补进悬空的收尾文本块并把它结束")
+    void closesDanglingSummaryBlockWithNotice() {
+        List<AgentEvent> events = new ArrayList<>(reasoningRound("r1"));
+        events.add(new ExceedMaxItersEvent("", 10, 10));
+        events.add(new ModelCallStartEvent("r2"));
+        events.add(new TextBlockStartEvent("r2", "text"));
+        events.add(new TextBlockDeltaEvent("r2", "text", "抱歉，"));
+        events.add(new AgentResultEvent(msg("Maximum iterations (10) reached. Error generating summary: reset")));
+
+        List<AgentEvent> out = run(Flux.fromIterable(events));
+
+        int result = indexOf(out, AgentResultEvent.class::isInstance);
+        assertTrue(out.get(result - 2) instanceof TextBlockDeltaEvent delta
+                && NOTICE.equals(delta.getDelta()) && "r2".equals(delta.getReplyId()),
+            "说明应补进悬空的收尾块：" + types(out));
+        assertTrue(out.get(result - 1) instanceof TextBlockEndEvent end && "r2".equals(end.getReplyId()),
+            "补完要替它结束：" + types(out));
+        assertEquals(1, noticeDeltas(out));
+    }
+
+    /**
+     * 收尾没有产出任何文本块（模型调用直接失败），但用户此前已经收到过正文增量——
+     * 流式消费方不会再看最终结果，只能单独补一个完整的文本块。
+     */
+    @Test
+    @DisplayName("收尾没有文本块但此前流式过正文：单独补一个完整的说明文本块")
+    void emitsStandaloneNoticeBlockWhenSummaryProducedNoText() {
+        List<AgentEvent> events = new ArrayList<>(reasoningRound("r1"));
+        events.add(new ExceedMaxItersEvent("", 10, 10));
+        events.add(new AgentResultEvent(msg("Maximum iterations (10) reached. Error generating summary: refused")));
+
+        List<AgentEvent> out = run(Flux.fromIterable(events));
+
+        int result = indexOf(out, AgentResultEvent.class::isInstance);
+        AgentEvent start = out.get(result - 3);
+        AgentEvent delta = out.get(result - 2);
+        AgentEvent end = out.get(result - 1);
+        assertTrue(start instanceof TextBlockStartEvent && delta instanceof TextBlockDeltaEvent
+                && end instanceof TextBlockEndEvent, "应是开始 / 增量 / 结束齐全的一个块：" + types(out));
+        String replyId = ((TextBlockStartEvent) start).getReplyId();
+        assertTrue(replyId != null && !"r1".equals(replyId), "不能挂到已经结束的块上：" + replyId);
+        assertEquals(replyId, ((TextBlockDeltaEvent) delta).getReplyId());
+        assertEquals(replyId, ((TextBlockEndEvent) end).getReplyId());
+        assertEquals(NOTICE, ((TextBlockDeltaEvent) delta).getDelta());
+    }
+
+    /**
+     * 整轮一个正文增量都没有：流式消费方会用最终结果补全文，最终结果里已经有说明，
+     * 再补增量就会让用户只看到说明、看不到最终结果——也等于换了一种方式重复。
+     */
+    @Test
+    @DisplayName("整轮未流式过正文：说明只留在最终结果里，不另补增量")
+    void leavesNoticeToFinalResultWhenNothingWasStreamed() {
+        List<AgentEvent> out = run(Flux.just(
+            new ExceedMaxItersEvent("r", 10, 10),
+            new AgentResultEvent(msg("抱歉。"))));
+
+        assertEquals(0, count(out, TextBlockDeltaEvent.class), "不应补增量：" + types(out));
+        assertEquals("抱歉。" + NOTICE,
+            ((AgentResultEvent) out.get(out.size() - 1)).getResult().getTextContent());
     }
 
     @Test
@@ -182,6 +299,61 @@ class LoopGuardMiddlewareTest {
 
     private List<AgentEvent> run(Flux<AgentEvent> downstream) {
         return middleware.onAgent(null, ctx(), input(), in -> downstream).collectList().block();
+    }
+
+    /**
+     * 框架 2.0.3 一轮「转不出来」的事件形状：推理轮先说一句再调工具 → 轮次用尽 →
+     * 收尾回复逐片流式 → 最终结果汇总。按反编译的 {@code ReActAgent#summarizing} 排列，
+     * 并由 {@link LoopGuardRealAgentStreamTest} 用真实 Agent 钉住。
+     */
+    private List<AgentEvent> exhaustedTurn() {
+        List<AgentEvent> events = new ArrayList<>(reasoningRound("r1"));
+        events.add(new ExceedMaxItersEvent("", 10, 10));
+        events.add(new ModelCallStartEvent("r2"));
+        events.add(new TextBlockStartEvent("r2", "text"));
+        events.add(new TextBlockDeltaEvent("r2", "text", "抱歉，"));
+        events.add(new TextBlockDeltaEvent("r2", "text", "没能处理好。"));
+        events.add(new TextBlockEndEvent("r2", "text"));
+        events.add(new ModelCallEndEvent("r2", null));
+        events.add(new AgentResultEvent(Msg.builder().id("summary-msg").name("assistant")
+            .role(MsgRole.ASSISTANT).content(TextBlock.builder().text("抱歉，没能处理好。").build())
+            .generateReason(GenerateReason.MAX_ITERATIONS).build()));
+        return events;
+    }
+
+    /** 一个推理轮：先对用户说一句（文本块在工具调用开始时结束），再调一次工具。 */
+    private List<AgentEvent> reasoningRound(String replyId) {
+        List<AgentEvent> events = new ArrayList<>();
+        events.add(new ModelCallStartEvent(replyId));
+        events.add(new TextBlockStartEvent(replyId, "text"));
+        events.add(new TextBlockDeltaEvent(replyId, "text", "我先查一下。"));
+        events.add(new TextBlockEndEvent(replyId, "text"));
+        events.addAll(toolCall("c-" + replyId, "queryOrder", "{\"orderId\":\"SO-1\"}"));
+        events.add(new ModelCallEndEvent(replyId, null));
+        return events;
+    }
+
+    private static int indexOf(List<AgentEvent> events, Predicate<AgentEvent> matcher) {
+        for (int i = 0; i < events.size(); i++) {
+            if (matcher.test(events.get(i))) {
+                return i;
+            }
+        }
+        throw new AssertionError("事件流里没有期望的事件：" + types(events));
+    }
+
+    private static long noticeDeltas(List<AgentEvent> events) {
+        return events.stream()
+            .filter(e -> e instanceof TextBlockDeltaEvent delta && delta.getDelta().contains(NOTICE.trim()))
+            .count();
+    }
+
+    private static long count(List<AgentEvent> events, Class<? extends AgentEvent> type) {
+        return events.stream().filter(type::isInstance).count();
+    }
+
+    private static List<String> types(List<AgentEvent> events) {
+        return events.stream().map(e -> e.getClass().getSimpleName()).collect(Collectors.toList());
     }
 
     /** 一次完整的工具调用事件三件套：名字、参数增量、结束。 */
