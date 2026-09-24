@@ -21,6 +21,20 @@
 
 ## 构建与测试（关键坑，全部实测踩过）
 
+- 2026-09-24 Harness 子智能体转发事件修复（无迁移，客服端仍从 **V31**、Admin 从 **V115** 核对）：全模块
+  BUILD SUCCESS，starter 2348/6 skip、app-server 302、customer-channel 82、admin 2287/1 skip、gateway 1，
+  **合计 5020**（排除 `RedisSessionPersistenceTest`，rebase 到含 #248～#250、#253 的 main 后实测）。本批次自身加 starter **+6**
+  （`SubagentForwardedEventsTest` 4 + `ForwardedTextTest` 2），7 处变异逐一打红。三条经验：
+  ① **同步 spawn 的子智能体事件带 `getSource()` 只进父的 `onAgent` 链**（不经父的 onActing/onModelCall），
+  **改写正文的中间件用三参构造重建 `TextBlockDeltaEvent` 会抹掉 source**——子智能体正文就此「洗白」成主智能体答复，
+  消费方按 source 过滤也救不回来（admin 子智能体卡片在开脱敏/敏感词时同样被破坏）。改写一律走 `ForwardedText`；
+  框架给每个文本块的 blockId 都是常量 `"text"`，按块缓冲必须再按来源分；
+  ② **子智能体自己那条链是盲的**：它的工具调用只转发给父流，自己链上的 trace 恒为空。
+  `SelfCorrectionMiddleware` 在 `AgentEventEmitter.fromForwardingContext` 存在时让位，由父层在转发流上判
+  （子智能体的工具调用计入依据、正文不判）；否则查过进度的「款项已退」也会在 `sub-` 会话上转人工；
+  ③ H5 只下发 `source == null` 的正文（`CustomerServiceService#chatStream` 一处，WS/SSE/同步/落库/缓存共用）；
+  AG-UI 恒用 `ReActAgent`、无子智能体，不受影响。
+
 - 2026-09-24 语义缓存「本轮转过人工」准入（无迁移，客服端仍从 **V31**、Admin 从 **V115** 核对）：
   全模块 BUILD SUCCESS，starter 2342/6 skip、app-server 302、customer-channel 82、admin 2287/1 skip、gateway 1，
   **合计 5014**（排除 `RedisSessionPersistenceTest`，rebase 到含 #249 的 main 之后实测）。本批次自身加 starter **+14**

@@ -229,8 +229,8 @@ public class SensitiveWordMiddleware implements MiddlewareBase {
      */
     private Flux<AgentEvent> filterDelta(Agent agent, RuntimeContext ctx, TextBlockDeltaEvent delta,
                                          OutboundStreamState state) {
-        SensitiveWordStreamGuard guard = state.guards.computeIfAbsent(delta.getBlockId(),
-            k -> newGuard(agent, ctx));
+        SensitiveWordStreamGuard guard = state.guards.computeIfAbsent(
+            ForwardedText.blockKey(delta.getSource(), delta.getBlockId()), k -> newGuard(agent, ctx));
         if (guard.isBlocked()) {
             // 已经拦下过：后续片段一律丢弃，不再往下发
             return Flux.empty();
@@ -242,13 +242,13 @@ public class SensitiveWordMiddleware implements MiddlewareBase {
         }
         return emit.isEmpty()
             ? Flux.empty()
-            : Flux.just(new TextBlockDeltaEvent(delta.getReplyId(), delta.getBlockId(), emit));
+            : Flux.just(ForwardedText.delta(delta.getSource(), delta.getReplyId(), delta.getBlockId(), emit));
     }
 
     /** 块结束：把缓冲区里留的尾巴过滤后补发，再放行结束事件——不 flush 就会吞掉正文末尾几个字。 */
     private Flux<AgentEvent> flushBlock(Agent agent, RuntimeContext ctx, TextBlockEndEvent end,
                                         OutboundStreamState state) {
-        SensitiveWordStreamGuard guard = state.guards.remove(end.getBlockId());
+        SensitiveWordStreamGuard guard = state.guards.remove(ForwardedText.blockKey(end.getSource(), end.getBlockId()));
         if (guard == null) {
             return Flux.just(end);
         }
@@ -258,7 +258,7 @@ public class SensitiveWordMiddleware implements MiddlewareBase {
         }
         return tail.isEmpty()
             ? Flux.just(end)
-            : Flux.just(new TextBlockDeltaEvent(end.getReplyId(), end.getBlockId(), tail), end);
+            : Flux.just(ForwardedText.delta(end.getSource(), end.getReplyId(), end.getBlockId(), tail), end);
     }
 
     /**
@@ -473,7 +473,8 @@ public class SensitiveWordMiddleware implements MiddlewareBase {
      * 并发会话会互相串内容）。
      *
      * <p>{@code buffers} 按 blockId 分别缓冲：同一次回复可能有多个文本块（正文被工具调用打断后续写），
-     * 各块的尾巴必须独立保留，混在一起会把 A 块的半个词接到 B 块开头。</p>
+     * 各块的尾巴必须独立保留，混在一起会把 A 块的半个词接到 B 块开头。子智能体转发进来的块另按来源分开、
+     * 放行时沿用来源（见 {@link ForwardedText}）：它的正文照样过滤，admin 的子智能体卡片展示的就是这一份。</p>
      */
     private static final class OutboundStreamState {
         private final Map<String, SensitiveWordStreamGuard> guards = new LinkedHashMap<>();
