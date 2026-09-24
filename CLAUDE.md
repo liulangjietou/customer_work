@@ -21,6 +21,18 @@
 
 ## 构建与测试（关键坑，全部实测踩过）
 
+- 2026-09-24 语义缓存「本轮转过人工」准入（无迁移，客服端仍从 **V31**、Admin 从 **V115** 核对）：
+  全模块 BUILD SUCCESS，starter 2342/6 skip、app-server 302、customer-channel 82、admin 2287/1 skip、gateway 1，
+  **合计 5014**（排除 `RedisSessionPersistenceTest`，rebase 到含 #249 的 main 之后实测）。本批次自身加 starter **+14**
+  （`HandoffWatchTest` 8 + `CustomerServiceCacheFinishReasonTest` 3 + `CustomerServiceCacheRealAgentTest` 3）。两条经验：
+  ① **转人工事实记在 `HandoffService#create` 入口，不让五个来源各自上报**：`HandoffService#watch` 按会话打开观察窗口，
+  `CustomerServiceService` 在拿到会话锁后、Agent 运行全程挂上（`Mono/Flux.using`），`ReplyFinish#replayable` 多一条条件。
+  方案对比过「往 `RuntimeContext` 放轮次对象」（框架确实能把 `RuntimeContext` 注入 `@Tool` 参数），
+  但那要五个调用点都改、新来源漏传不报错，正是「能力只接在一条路上」的形状。记的是「请求过」而非「建成了」——
+  会话已在人工链路上时工单状态不变，按工单状态判定会漏掉，而答复里照样是「已为您转接」；
+  ② **脚本化模型发工具调用要同时给 `input` 与原始 JSON `content`**：只给 `input` 时框架按 `content` 校验，
+  报「未找到所需属性」、工具根本不执行，而模型照样收到一个工具结果继续往下说——测试不断言工单真实建出就照不出来。
+
 - 2026-09-24 语义缓存按结束原因准入（无迁移，客服端仍从 **V31**、Admin 从 **V115** 核对）：全模块
   BUILD SUCCESS，starter 2328/6 skip、app-server 302、customer-channel 82、admin 2287/1 skip、gateway 1，
   **合计 5000**（排除 `RedisSessionPersistenceTest`，rebase 到含 #248/#253 的 main 之后实测）。本批次自身加 starter **+31**
