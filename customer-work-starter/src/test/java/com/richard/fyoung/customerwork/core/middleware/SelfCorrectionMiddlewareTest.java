@@ -9,9 +9,12 @@ import io.agentscope.core.event.AgentResultEvent;
 import io.agentscope.core.event.TextBlockDeltaEvent;
 import io.agentscope.core.event.ToolCallStartEvent;
 import io.agentscope.core.event.TextBlockEndEvent;
+import io.agentscope.core.message.GenerateReason;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
+import io.agentscope.core.message.ToolResultBlock;
+import io.agentscope.core.message.ToolUseBlock;
 import io.agentscope.core.middleware.AgentInput;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -20,6 +23,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -85,16 +89,50 @@ class SelfCorrectionMiddlewareTest {
         verify(handoffService).create(anyString(), contains("已退款"));
     }
 
+    /**
+     * 「原样放行」必须逐字比对。
+     *
+     * <p>此前只断言「包含已退款」，于是命中关键词之后每个增量都被替换成关键词本身
+     * （用户看到「您的订单已退款已退款」，后半句整段丢失）也照样是绿的——
+     * 查过退款进度再如实转述，恰恰是这条防线最常放行的正常情形。</p>
+     */
     @Test
-    @DisplayName("查过退款进度后说「已退款」是正常转述，原样放行")
+    @DisplayName("查过退款进度后说「已退款」是正常转述，逐字原样放行")
     void passesWhenEvidenceToolWasCalled() {
         List<AgentEvent> out = runStream(List.of("queryRefundProgress"),
-            List.of("经查询，", "您的订单", "已退款", "，请注意查收"));
+            List.of("经查询，", "您的订单", "已退款，", "请注意", "查收"));
 
-        String emitted = deltaText(out);
-        assertTrue(emitted.contains("已退款"), "转述系统查到的真实状态不该被拦：" + emitted);
-        assertFalse(emitted.contains("未经系统核实"), "正常转述不该被追加澄清");
+        assertEquals("经查询，您的订单已退款，请注意查收", deltaText(out),
+            "转述系统查到的真实状态应一字不差地送达，不能丢字也不能重复");
         verify(handoffService, never()).create(anyString(), anyString());
+    }
+
+    /**
+     * 改写最终结果只能换内容，不能重建消息。
+     *
+     * <p>等待审批时框架把挂起的工具调用放在同一条结果消息里，并标上 {@code TOOL_SUSPENDED}：
+     * AG-UI 适配器据此（连同消息 id）生成审批中断。重建消息会把这些一并抹掉，审批界面就再也出不来。</p>
+     */
+    @Test
+    @DisplayName("非流式改写保留结果消息的身份、结束原因与挂起的工具调用")
+    void rewriteKeepsSuspendedToolCall() {
+        ToolUseBlock refund = new ToolUseBlock("call-1", "submitRefund", Map.of("orderId", "SO-1"));
+        Msg suspended = Msg.builder().id("reply-msg-1").role(MsgRole.ASSISTANT).name("assistant")
+            .content(List.of(TextBlock.builder().text("好的，已为您退款").build(), refund,
+                ToolResultBlock.suspended(refund)))
+            .generateReason(GenerateReason.TOOL_SUSPENDED)
+            .build();
+
+        List<AgentEvent> out = middleware.onAgent(null, ctx(), input(),
+            in -> Flux.just(new AgentResultEvent(suspended))).collectList().block();
+
+        Msg rewritten = ((AgentResultEvent) out.get(out.size() - 1)).getResult();
+        assertEquals("reply-msg-1", rewritten.getId(), "AG-UI 用结果消息 id 拼审批中断标识");
+        assertEquals(GenerateReason.TOOL_SUSPENDED, rewritten.getGenerateReason());
+        assertEquals(1, rewritten.getContentBlocks(ToolUseBlock.class).size(), "挂起的工具调用不能丢");
+        assertTrue(rewritten.getContentBlocks(ToolResultBlock.class).get(0).isSuspended());
+        assertEquals("好的，已为您退款" + new CustomerWorkProperties().getHooks().getSelfCorrection().getClarification(),
+            rewritten.getTextContent());
     }
 
     @Test
