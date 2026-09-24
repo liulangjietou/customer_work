@@ -21,6 +21,21 @@
 
 ## 构建与测试（关键坑，全部实测踩过）
 
+- 2026-09-24 意图分类器专用轻量 Agent（无迁移，客服端仍从 **V31**、Admin 从 **V115** 核对）：全模块
+  BUILD SUCCESS，starter 2351/6 skip、app-server 302、customer-channel 82、admin 2287/1 skip、gateway 1，
+  **合计 5023**（排除 `RedisSessionPersistenceTest`，rebase 到含 #251 的 main 之后实测）。本批次自身加 starter **+3**
+  （`CustomerServiceAgentFactoryTest` 的 `intentClassifier_*`）。三条经验：
+  ① **「顺手复用现成工厂」会把整套能力一起带过去**：`classifyIntent` 复用 `createAgent`，分类时模型能看到
+  30 个工具（业务写操作 + 长期记忆 / RAG / Skill / todo / 元工具），而 Permission 的 ask 规则只覆盖退款与转人工、
+  默认还是关的；挂着 stateStore 还会让同一会话的上一次分类被加载进下一次。只做一件事的调用要单独建 Agent，
+  **治理装配照走 `applyTo`**；
+  ② **门禁按文件判定会漏掉同文件的第二个调用点**：`AgentAssemblyAlignmentTest` 已改为按调用点计数
+  （建 Agent 次数 ≤ 装配标记次数），变异测试实证旧写法拦不住；生产代码建 Toolkit 一律用
+  `ManagedToolkit` / `DefaultActiveGroupsToolkit`（`ToolkitExecutionModeTest` 会拦 `new Toolkit(...)`）；
+  ③ **框架按「有没有工具」选择结构化输出路径**：空工具集改看 `supportsNativeStructuredOutput()` 而非
+  `...WithTools()`；本项目没对任何厂商模型开 `nativeStructuredOutput`，两者都是 false，选路没变——
+  哪天开了，分类器会先切到原生 response_format。另：变异测试用 `mv` 还原源码会保留旧 mtime，
+  增量编译不重编、跑的还是变异字节码，还原后要 `touch` 或 `clean`。
 - 2026-09-24 Harness 子智能体转发事件修复（无迁移，客服端仍从 **V31**、Admin 从 **V115** 核对）：全模块
   BUILD SUCCESS，starter 2348/6 skip、app-server 302、customer-channel 82、admin 2287/1 skip、gateway 1，
   **合计 5020**（排除 `RedisSessionPersistenceTest`，rebase 到含 #248～#250、#253 的 main 后实测）。本批次自身加 starter **+6**
