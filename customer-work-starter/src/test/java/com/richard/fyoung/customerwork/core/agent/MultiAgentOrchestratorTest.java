@@ -183,7 +183,7 @@ class MultiAgentOrchestratorTest {
         props.getMultiAgent().setReduceEnabled(false);
         MultiAgentOrchestrator orch = newOrchestrator(props);
 
-        String out = orch.reduce("s-1", "退款吗", List.of(reply("OrderExpert", "已发货"),
+        String out = orch.reduce(ConversationTurn.open("s-1"), "退款吗", List.of(reply("OrderExpert", "已发货"),
             reply("KnowledgeExpert", "支持七天无理由"))).block(Duration.ofSeconds(2));
         assertTrue(out.contains("【OrderExpert】已发货"));
         assertTrue(out.contains("【KnowledgeExpert】支持七天无理由"));
@@ -193,7 +193,7 @@ class MultiAgentOrchestratorTest {
     @Test
     void reduce_shouldSkipForSingleReply() {
         MultiAgentOrchestrator orch = newOrchestrator(new CustomerWorkProperties());
-        String out = orch.reduce("s-1", "订单状态", List.of(reply("OrderExpert", "已发货")))
+        String out = orch.reduce(ConversationTurn.open("s-1"), "订单状态", List.of(reply("OrderExpert", "已发货")))
             .block(Duration.ofSeconds(2));
         assertEquals("【OrderExpert】已发货", out);
     }

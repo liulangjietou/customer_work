@@ -34,6 +34,20 @@
   ③ 重建结果消息除了丢结束原因，还会丢挂起的工具调用与消息 id——**AG-UI 适配器凭 `TOOL_SUSPENDED` + 消息 id 生成审批中断**，
   重建后审批界面出不来。
 
+- 2026-09-24 循环守卫委派调用收尾（无迁移，客服端仍从 **V31**、Admin 从 **V115** 核对）：全模块
+  BUILD SUCCESS，starter 2297/6 skip、app-server 302、customer-channel 82、admin 2287/1 skip、gateway 1，
+  **合计 4969**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+12**
+  （`MultiAgentTurnSettlementTest` 5 + `LoopGuardSubagentForwardingTest` 2 + `LoopGuardDelegationTest` 5）。两条经验：
+  ① **替本轮干活的内部调用不能自己对用户处置**：`/consult` 的分诊器 / 专家 / 归纳器跑在 `<会话>#mas-<阶段>`、
+  Harness 异步子智能体跑在 `sub-<uuid>`，在那里转人工建出的是没人能接到用户的工单。判定收在 `ConversationTurn`：
+  `AgentGovernanceAssembler#contextFor` 挂本轮，框架派生子上下文会**复制属性只换会话号**（反编译
+  `RuntimeContext.Builder#from` + 真实异步 spawn 实测），调用会话 ≠ 本轮会话即内部调用，只观测并上报，
+  由组织者（`MultiAgentOrchestrator`）在最终答复后统一追加说明、转一次人工；
+  ② **同步 spawn 的子智能体事件只进父流**（`CallExecution#publishEvent`：有转发发射器就不写自己的 sink），
+  子智能体自己的中间件链只看得到开始 / 结果 / 结束——「子端守卫也会记一遍」不成立，父智能体这一层是唯一观测点；
+  带 `getSource()` 的事件按来源各记一本账，绝不左右父智能体这一轮。customer-work 的 H5 / AG-UI 出口目前
+  **没有**过滤带 source 的事件（子智能体开启时其正文会混进答复，默认关闭），已记后续任务。
+
 - 2026-09-23 循环守卫去向说明修复（无迁移，客服端仍从 **V31**、Admin 从 **V115** 核对）：全模块
   BUILD SUCCESS，starter 2273/6 skip、app-server 302、customer-channel 82、admin 2284/1 skip、gateway 1，
   **合计 4942**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+9**

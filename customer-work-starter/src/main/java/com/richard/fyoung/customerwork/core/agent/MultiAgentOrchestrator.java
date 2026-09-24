@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.core.agent;
 
+import com.richard.fyoung.customerwork.capability.handoff.HandoffService;
 import com.richard.fyoung.customerwork.capability.typesafe.JevDecisionService;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.config.properties.MultiAgentProperties;
@@ -63,6 +64,11 @@ import com.richard.fyoung.customerwork.infra.config.properties.MultiAgentPropert
  *
  * <p><b>sequential（串行）</b>模式则让问题依次流过各专家逐步细化（{@code Mono} 链式）。</p>
  *
+ * <p><b>本类是这一轮答复的组织者</b>：分诊器、专家、归纳器都跑在派生会话（{@code <会话>#mas-<阶段>}）上，
+ * 它们转不出来或答复被安全闸门拦下时只上报（{@link ConversationTurn}）。本类在归纳出最终答复之后统一收尾——
+ * 去向说明接在最终答复末尾（归纳器改写不到它），转人工落在用户自己的会话上、只转一次。
+ * 分诊器挂的是一个不结算的轮次：它转不出来时会回退为广播全部专家，用户照样拿到完整答复。</p>
+ *
  * <p>说明：HarnessAgent 的 subagent 由主智能体在 ReAct 循环里自行逐个 spawn，<b>本质串行且不可编程控制</b>；
  * 需要"主 + 子智能体"<b>可控并行</b>时走本编排器，跨进程则用 A2A + Nacos 注册发现。</p>
  */
@@ -85,6 +91,7 @@ public class MultiAgentOrchestrator {
     private static final String ERR_EXPERT_FAIL = "MAS-EXPERT-FAIL";
     private static final String ERR_ROUTE_FAIL = "MAS-ROUTE-FAIL";
     private static final String ERR_REDUCE_FAIL = "MAS-REDUCE-FAIL";
+    private static final String ERR_HANDOFF_FAIL = "MAS-HANDOFF-FAIL";
 
     /** 配置里引用了编排器手里没有的工具组时的错误码。 */
     private static final String ERR_UNKNOWN_TOOL_GROUP = "MAS-TOOL-GROUP-UNKNOWN";
@@ -103,6 +110,8 @@ public class MultiAgentOrchestrator {
     /** 可为 null：未接入 Micrometer 时降级为无指标（仅日志）。 */
     private MeterRegistry meterRegistry;
     private JevDecisionService jevDecisionService;
+    /** 可为 null：未装配工单服务时，内部调用上报的转人工只记日志，说明照常追加。 */
+    private HandoffService handoffService;
     /**
      * 治理中间件装配器：与 {@code CustomerServiceAgentFactory} 共用同一份装配。
      *
@@ -161,6 +170,12 @@ public class MultiAgentOrchestrator {
         this.jevDecisionService = jevDecisionService;
     }
 
+    /** 工单服务（可选）：理由同 {@link #setJevDecisionService}，增益型依赖不改构造器。 */
+    @Autowired(required = false)
+    void setHandoffService(HandoffService handoffService) {
+        this.handoffService = handoffService;
+    }
+
     /** 测试可注入指标注册表（避免暴露 setter 给生产链路误用）。 */
     void setMeterRegistry(MeterRegistry meterRegistry) {
         this.meterRegistry = meterRegistry;
@@ -180,6 +195,13 @@ public class MultiAgentOrchestrator {
             ? governanceAssembler.contextFor("multi-agent-" + stage, scoped,
                 AgentInvocationIdentity.CHANNEL_INTERNAL)
             : RuntimeContext.builder().userId("multi-agent").sessionId(scoped).build();
+    }
+
+    /** 替本轮干活的调用上下文：会话仍按阶段隔离，轮次指向用户会话，内部调用据此只上报不自行处置。 */
+    private RuntimeContext delegatedContext(ConversationTurn turn, String stage) {
+        RuntimeContext ctx = contextFor(turn.sessionId(), stage);
+        ctx.put(ConversationTurn.class, turn);
+        return ctx;
     }
 
     /**
@@ -276,11 +298,13 @@ public class MultiAgentOrchestrator {
         }
         List<ReActAgent> all = buildSpecialists();
         Msg msg = userMsg(userText);
-        RuntimeContext consultCtx = contextFor(sessionId, "consult");
+        ConversationTurn turn = ConversationTurn.open(sessionId);
+        RuntimeContext consultCtx = delegatedContext(turn, "consult");
 
         if (MODE_SEQUENTIAL.equalsIgnoreCase(cfg.getMode())) {
             log.info("multi-agent orchestration: sequential, {} specialists", all.size());
             return sequential(all, msg, consultCtx).map(Msg::getTextContent)
+                .flatMap(reply -> settle(turn, reply))
                 .doFinally(signal -> closeAgents(all, "multi-agent-sequential"));
         }
         return selectExperts(sessionId, userText, all)
@@ -292,8 +316,35 @@ public class MultiAgentOrchestrator {
                     .collect(Collectors.toList());
                 return fanout(tasks, cfg.getMaxConcurrency());
             })
-            .flatMap(replies -> reduce(sessionId, userText, replies))
+            .flatMap(replies -> reduce(turn, userText, replies))
+            .flatMap(reply -> settle(turn, reply))
             .doFinally(signal -> closeAgents(all, "multi-agent-fanout"));
+    }
+
+    /**
+     * 本轮收尾：内部调用上报的去向说明接在最终答复末尾，需要转人工时落到用户会话上、只转一次。
+     *
+     * <p>放在归纳之后：说明若留在专家的中间结论里，归纳器改写时可以把它改掉或丢掉；
+     * 转人工由这里统一做，而不是各专家并行时各建一次——同一会话并发建单可能建出两张。
+     * 建单是一次落库，挪到 boundedElastic；失败只记日志，说明照常给用户。</p>
+     */
+    private Mono<String> settle(ConversationTurn turn, String reply) {
+        if (!turn.hasEscalations()) {
+            return Mono.just(reply);
+        }
+        String settled = turn.appendNotices(reply);
+        Optional<String> reason = turn.handoffReason();
+        if (reason.isEmpty() || handoffService == null) {
+            return Mono.just(settled);
+        }
+        return Mono.fromCallable(() -> handoffService.create(turn.sessionId(), reason.get()))
+            .subscribeOn(Schedulers.boundedElastic())
+            .thenReturn(settled)
+            .onErrorResume(e -> {
+                log.error("multi-agent handoff failed, errorCode={}, session={}", ERR_HANDOFF_FAIL,
+                    turn.sessionId(), e);
+                return Mono.just(settled);
+            });
     }
 
     /**
@@ -353,8 +404,9 @@ public class MultiAgentOrchestrator {
     private Mono<List<ReActAgent>> llmRoute(String sessionId, String userText, List<ReActAgent> all) {
         return Mono.using(
                 this::routerAgent,
+                // 分诊器挂一个不结算的轮次：它转不出来时本就回退为广播全部专家，不该打扰用户
                 router -> router.call("判断用户意图并结构化输出：" + userText, IntentResult.class,
-                    contextFor(sessionId, "router")),
+                    delegatedContext(ConversationTurn.open(sessionId), "router")),
                 router -> AgentResourceCloser.closeQuietly(router, "multi-agent-router"))
             .map(message -> message.getStructuredData(IntentResult.class))
             .map(intent -> {
@@ -436,7 +488,7 @@ public class MultiAgentOrchestrator {
      *
      * <p>包级可见，便于单测以关闭 / 单专家路径离线断言退化为拼接。</p>
      */
-    Mono<String> reduce(String sessionId, String userText, List<Msg> replies) {
+    Mono<String> reduce(ConversationTurn turn, String userText, List<Msg> replies) {
         String joined = aggregate(replies);
         if (!properties.getMultiAgent().isReduceEnabled() || replies.size() <= 1) {
             recordReduce(false);
@@ -447,7 +499,7 @@ public class MultiAgentOrchestrator {
             + "去重并消解冲突，不要罗列专家名：\n\n" + joined;
         return Mono.using(
                 this::reducerAgent,
-                reducer -> reducer.call(prompt, contextFor(sessionId, "reducer")),
+                reducer -> reducer.call(prompt, delegatedContext(turn, "reducer")),
                 reducer -> AgentResourceCloser.closeQuietly(reducer, "multi-agent-reducer"))
             .map(Msg::getTextContent)
             .onErrorResume(err -> {

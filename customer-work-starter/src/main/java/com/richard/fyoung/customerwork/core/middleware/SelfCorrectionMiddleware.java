@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.core.middleware;
 
 import com.richard.fyoung.customerwork.capability.handoff.HandoffService;
+import com.richard.fyoung.customerwork.core.agent.ConversationTurn;
 import com.richard.fyoung.customerwork.capability.typesafe.JevDecisionEvent;
 import com.richard.fyoung.customerwork.capability.typesafe.JevDecisionService;
 import com.richard.fyoung.customerwork.capability.typesafe.JevRunMode;
@@ -456,7 +457,7 @@ public class SelfCorrectionMiddleware implements MiddlewareBase {
             CODE_CHECK_FAIL, agentName(agent), sessionId, keyword, stage,
             trace == null ? "?" : trace.calledTools());
         audit(agent, sessionId, keyword, stage, trace);
-        handoff(sessionId, keyword);
+        handoff(agent, ctx, keyword);
     }
 
     private void audit(Agent agent, String sessionId, String keyword, String stage,
@@ -482,9 +483,22 @@ public class SelfCorrectionMiddleware implements MiddlewareBase {
      * 转人工：资金类误告知一旦发生，人工介入比任何自动补救都可靠。
      *
      * <p>转人工失败不影响拦截本身——澄清话术已经发出去了，用户至少知道那句话不作数。</p>
+     *
+     * <p>替本轮干活的内部调用（多专家的专家 / 归纳器等）不自己转：它跑在派生会话上，在那里建单没人能接到用户。
+     * 交给本轮的组织者，由它落到用户会话上、只转一次（见 {@link ConversationTurn}）。</p>
      */
-    private void handoff(String sessionId, String keyword) {
-        if (!handoffOnHit || sessionId == null || sessionId.isBlank()) {
+    private void handoff(Agent agent, RuntimeContext ctx, String keyword) {
+        if (!handoffOnHit) {
+            return;
+        }
+        String reason = "智能体给出未经核实的资金结论：" + keyword;
+        ConversationTurn owner = ConversationTurn.delegatedBy(ctx);
+        if (owner != null) {
+            owner.escalate(new ConversationTurn.Escalation(agentName(agent), null, reason));
+            return;
+        }
+        String sessionId = ctx == null ? null : ctx.getSessionId();
+        if (sessionId == null || sessionId.isBlank()) {
             return;
         }
         HandoffService handoffService = handoffProvider.getIfAvailable();
@@ -492,7 +506,7 @@ public class SelfCorrectionMiddleware implements MiddlewareBase {
             return;
         }
         try {
-            handoffService.create(sessionId, "智能体给出未经核实的资金结论：" + keyword);
+            handoffService.create(sessionId, reason);
         } catch (Exception e) {
             log.error("[FIX] handoff on unverified claim failed, code={}, session={}",
                 CODE_CHECK_FAIL, sessionId, e);

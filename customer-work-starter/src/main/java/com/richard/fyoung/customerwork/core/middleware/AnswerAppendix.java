@@ -18,7 +18,7 @@ import java.util.UUID;
  *
  * <h3>为什么要补两处</h3>
  * <p>用户端（WS / SSE，以及复用流式内核的同步接口）与 AG-UI 只看文本块增量，拿到过正文就不再看最终结果；
- * {@code call()}（IM 渠道、评测、多专家协作）只看最终结果。两类消费方各看各的事件，说明在两处各出现恰好一次。</p>
+ * {@code call()}（IM 渠道、评测）只看最终结果。两类消费方各看各的事件，说明在两处各出现恰好一次。</p>
  *
  * <h3>流式那一处补在哪</h3>
  * <p>优先补进用户正在读的那个文本块、<b>赶在它结束之前</b>：结束之后再往同一块追加，AG-UI 适配器会照发
@@ -41,6 +41,11 @@ final class AnswerAppendix {
     AnswerAppendix(String text, String standaloneBlockId) {
         this.text = text;
         this.standaloneBlockId = standaloneBlockId;
+    }
+
+    /** 说明原文：交给本轮组织者代为追加时用（见 {@code ConversationTurn}）。 */
+    String text() {
+        return text;
     }
 
     /** 补进仍未结束的文本块；调用方负责让它排在该块的结束事件之前。 */

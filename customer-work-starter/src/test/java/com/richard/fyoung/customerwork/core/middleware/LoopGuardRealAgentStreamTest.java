@@ -204,7 +204,7 @@ class LoopGuardRealAgentStreamTest {
         assertEquals(SUMMARY + NOTICE, saved.get(0).content(), "AG-UI 落库取最后一条消息，收尾正文与说明都要在");
     }
 
-    /** 只读最终结果的消费方：IM 渠道、评测、多专家协作的专家调用。 */
+    /** 只读最终结果的消费方：IM 渠道、评测（多专家协作的专家是内部调用，由编排器收尾，见 MultiAgentTurnSettlementTest）。 */
     @Test
     @DisplayName("非流式 call()：最终结果同样恰好一次，且保留框架标的结束原因")
     void callPathSeesNoticeExactlyOnce() {
