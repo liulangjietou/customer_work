@@ -1,5 +1,6 @@
 package com.richard.fyoung.customerwork.core.service;
 
+import com.richard.fyoung.customerwork.capability.handoff.HandoffService;
 import com.richard.fyoung.customerwork.capability.semanticcache.SemanticCacheService;
 import com.richard.fyoung.customerwork.core.agent.CustomerServiceAgentFactory;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
@@ -48,6 +49,7 @@ import static org.mockito.Mockito.when;
 class CustomerServiceCacheFinishReasonTest {
 
     private static final String SESSION_ID = "u42:conv-1";
+    private static final String OTHER_SESSION_ID = "u7:conv-other";
     private static final String QUESTION = "运费怎么算";
     private static final String ANSWER = "运费满 99 包邮。";
     private static final SemanticCacheService.CacheGeneration CACHE_GENERATION =
@@ -61,6 +63,7 @@ class CustomerServiceCacheFinishReasonTest {
 
     private ReActAgent agent;
     private SemanticCacheService cache;
+    private HandoffService handoffService;
     private CustomerServiceService service;
 
     @BeforeEach
@@ -75,6 +78,8 @@ class CustomerServiceCacheFinishReasonTest {
         when(cache.lookup(eq(CACHE_GENERATION), anyString(), anyString())).thenReturn(Optional.empty());
         service = new CustomerServiceService(factory, mock(SessionStateManager.class), new CustomerWorkProperties(),
             empty(), empty(), empty(), empty(), providerOf(cache), empty());
+        handoffService = new HandoffService();
+        service.setHandoffService(handoffService);
     }
 
     @ParameterizedTest(name = "{0}")
@@ -186,6 +191,52 @@ class CustomerServiceCacheFinishReasonTest {
 
         assertEquals(CustomerServiceService.FALLBACK_REPLY, service.chat(SESSION_ID, QUESTION).block());
         assertNotCached();
+    }
+
+    /**
+     * 转人工的来源有五处（循环守卫、答复闸门、Jev 升级、Jev 退款风险、转人工工具），除循环守卫外
+     * 收尾都是正常结束——光看结束原因挡不住。这里模拟「本轮运行期间某个来源建了转人工单」。
+     */
+    @Test
+    @DisplayName("流式：本轮运行期间转了人工、且正常收尾的答复照常下发，但不写缓存")
+    void streamReplyWithHandoffInTurn_shouldNotBeCached() {
+        when(agent.streamEvents(anyList(), any(RuntimeContext.class))).thenReturn(Flux.defer(() -> {
+            handoffService.create(SESSION_ID, "用户要求人工");
+            return Flux.just(delta(ANSWER), finalResult(GenerateReason.MODEL_STOP));
+        }));
+
+        assertEquals(ANSWER, streamed());
+        assertNotCached();
+    }
+
+    @Test
+    @DisplayName("非流式：本轮运行期间转了人工、且正常收尾的答复照常返回，但不写缓存")
+    void callReplyWithHandoffInTurn_shouldNotBeCached() {
+        when(agent.call(anyString(), any(RuntimeContext.class))).thenReturn(Mono.defer(() -> {
+            handoffService.create(SESSION_ID, "用户要求人工");
+            return Mono.just(finalMsg(GenerateReason.MODEL_STOP));
+        }));
+
+        assertEquals(ANSWER, service.chat(SESSION_ID, QUESTION).block());
+        assertNotCached();
+    }
+
+    @Test
+    @DisplayName("对照：转人工发生在上一轮、或发生在别的会话上，本轮正常收尾的答复两条路径都写缓存")
+    void handoffOutsideThisTurn_shouldNotBlockCache() {
+        handoffService.create(SESSION_ID, "上一轮转的");
+        when(agent.streamEvents(anyList(), any(RuntimeContext.class))).thenReturn(Flux.defer(() -> {
+            handoffService.create(OTHER_SESSION_ID, "别的会话转的");
+            return Flux.just(delta(ANSWER), finalResult(GenerateReason.MODEL_STOP));
+        }));
+        when(agent.call(anyString(), any(RuntimeContext.class))).thenReturn(Mono.defer(() -> {
+            handoffService.create(OTHER_SESSION_ID, "别的会话转的");
+            return Mono.just(finalMsg(GenerateReason.MODEL_STOP));
+        }));
+
+        assertEquals(ANSWER, streamed());
+        assertEquals(ANSWER, service.chat(SESSION_ID, QUESTION).block());
+        assertCached(2);
     }
 
     // ---------- 辅助 ----------
