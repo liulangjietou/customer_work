@@ -34,12 +34,12 @@
    Workflow 的控制流写在代码里，Agent 的控制流由模型决定。项目中“退款信息收集”没有写成对话分支（Workflow），
    而是做成了工具（Agent），原因见 Q6。
 3. *（高阶追问，可以请候选人现场分析）这句“已转人工”的提示，在 H5 流式链路上用户看得到吗？*
-   已确认的事实有两条：一是 `LoopGuardMiddleware` 只在 `AgentResultEvent` 上追加提示；二是
+   早期版本看不到：`LoopGuardMiddleware` 只在 `AgentResultEvent` 上追加提示，而
    `CustomerServiceService.streamFromAgent` 只要收到过任何正文增量，就不再下发 `AgentResultEvent`。
-   所以，如果收尾回复是以增量形式流出的，这句提示就到不了 H5 用户，只有转人工这个动作本身会生效。
-   这和项目记录过的“只处理 `AgentResultEvent`，在流式路径上等于没生效”是同一类问题
-   （`SelfCorrectionMiddleware` 的做法是在流末尾追加一个增量）。结论要用真实流式链路验证，不能只看单测：
-   现有单测只断言了 `AgentResultEvent`。
+   收尾回复是逐片流式发出的，所以提示到不了 H5 用户，只有转人工这个动作本身生效；当时的单测也只断言了 `AgentResultEvent`。
+   2026-09-23 已修复：说明以增量补进收尾文本块、**赶在块结束之前**，同时追加到最终结果上，两类消费方各自恰好看到一次；
+   改写最终消息用 `Msg#withContent`，保留 `MAX_ITERATIONS` 结束原因。完整分析见[第 10 期 Q7](10-决策层与护栏进阶-结构化判定与循环守卫.md)。
+   这道追问适合考察候选人能否从“事件由谁消费”推出结论，而不是只看单测是否通过。
 
 **减分回答**：只背 Thought / Action / Observation 三个词，讲不出循环结束和出错时的处理。
 
