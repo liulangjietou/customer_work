@@ -62,14 +62,14 @@
 
 ### 其他两篇与全库索引
 
-题库共四篇、34 期、369 题：
+题库共四篇、39 期、429 题：
 
 | 篇 | 期数 | 题量 | 内容 | 入口 |
 |---|---:|---:|---|---|
 | 项目实战篇（本页） | 8 | 57 | 基于本项目真实实现的设计与踩坑 | 上表 |
 | 通用八股文与最佳实践篇 | 7 | 100 | LLM 基础、Agent 范式、RAG、记忆与上下文、协议与 Java 框架、安全与评测、工程化 | [general/README.md](general/README.md) |
 | 进阶篇（高级 / 资深） | 10 | 108 | 运行时、推理与训练、系统设计、排障与容量、数据 Agent、评测统计、合规、Java 深入、前沿、技术领导力 | [advanced/README.md](advanced/README.md) |
-| 基础补全篇 | 9 | 104 | 提示词工程、LLM 原理、工作流编排、Java 集合并发、JVM 与 Spring、MySQL / Redis / MQ、微服务与云原生、手写代码、向量数据库 | [foundation/README.md](foundation/README.md) |
+| 基础补全篇 | 14 | 164 | 提示词工程、LLM 原理、工作流编排、Java 集合并发、JVM 与 Spring、MySQL / Redis / MQ、微服务与云原生、手写代码、向量数据库、网络与操作系统、通用算法、Python 生态、评测与观测工具、HR 与行为面 | [foundation/README.md](foundation/README.md) |
 
 按关键词检索全部题目，见 [INDEX.md](INDEX.md)（含能力覆盖矩阵）。
 
