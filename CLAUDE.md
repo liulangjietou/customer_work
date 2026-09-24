@@ -21,6 +21,19 @@
 
 ## 构建与测试（关键坑，全部实测踩过）
 
+- 2026-09-24 答复安全闸门流式修复（无迁移，客服端仍从 **V31**、Admin 从 **V115** 核对）：全模块
+  BUILD SUCCESS，starter 2285/6 skip、app-server 302、customer-channel 82、admin 2284/1 skip、gateway 1，
+  **合计 4954**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+12**
+  （`SelfCorrectionRealAgentStreamTest` 6 + `SelfCorrectionJevTest` 5 + `SelfCorrectionMiddlewareTest` 1）。三条经验：
+  ① **判定必须等最终结果、而最终结果到达时答复块已经结束**（框架 2.0.3：块结束 → `ModelCallEnd` → 最终结果）：
+  Jev 可能出手时扣住答复块结束连同尾随的 `ModelCallEnd`，拦下则澄清补在块结束之前——只延后、不改序、不丢弃，
+  Jev 关闭时时序不变。「块结束后补」与「总是另起一块」两种放法均被变异测试否掉（理由同上一条①）；
+  往答复末尾追加说明统一走 `AnswerAppendix`（循环守卫与答复闸门共用）；
+  ② **「原样放行」必须逐字断言**：查过退款进度时关键词命中之后每一片都被关键词顶替（用户看到「已退款已退款」），
+  旧用例只断言 `contains("已退款")` 一直是绿的；
+  ③ 重建结果消息除了丢结束原因，还会丢挂起的工具调用与消息 id——**AG-UI 适配器凭 `TOOL_SUSPENDED` + 消息 id 生成审批中断**，
+  重建后审批界面出不来。
+
 - 2026-09-23 循环守卫去向说明修复（无迁移，客服端仍从 **V31**、Admin 从 **V115** 核对）：全模块
   BUILD SUCCESS，starter 2273/6 skip、app-server 302、customer-channel 82、admin 2284/1 skip、gateway 1，
   **合计 4942**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+9**
@@ -29,7 +42,7 @@
   只改 `AgentResultEvent` 在用户端（WS / SSE / 同步接口）与 AG-UI 上都是假性生效；而块结束后再补同一 replyId
   的增量，真实 AG-UI 适配器会发出已结束消息的 `TEXT_MESSAGE_CONTENT`（变异测试实证），另起新块又会让
   `AguiService`（落库只取最后一条消息）丢掉收尾正文，外层 `SensitiveWordMiddleware` 也只在块结束时放行尾巴。
-  `SelfCorrectionMiddleware` 的 Jev 路径仍是块结束后补增量的写法，待另行处理；
+  `SelfCorrectionMiddleware` 的 Jev 路径当时仍是块结束后补增量的写法（已由上一条批次修掉）；
   ② **改写 `AgentResultEvent` 不要用 `Msg.builder()` 重建消息**：框架把 `MAX_ITERATIONS` 等结束原因写在消息元数据里，
   重建会静默退回 `MODEL_STOP`，外层 `ChatTerminalCapture` 填的终止信封与 H5 答复状态跟着错；只换内容用 `Msg#withContent`。
 

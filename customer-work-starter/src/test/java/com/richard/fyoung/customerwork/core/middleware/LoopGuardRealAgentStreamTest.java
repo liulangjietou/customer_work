@@ -50,14 +50,13 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
+import static com.richard.fyoung.customerwork.core.middleware.AguiTextMessageAssertions.assertWellFormedTextMessages;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -288,24 +287,6 @@ class LoopGuardRealAgentStreamTest {
         return new RunAgentInput(SESSION, "run-" + UUID.randomUUID(),
             new AguiMessageConverter().toAguiMessageList(List.of(userMsg())),
             List.of(), List.of(), Map.of(), Map.of());
-    }
-
-    /** AG-UI 文本消息的协议约束：先开始后内容、结束之后不再有内容、运行结束前每条都已结束。 */
-    private static void assertWellFormedTextMessages(List<AguiEvent> events) {
-        Set<String> started = new HashSet<>();
-        Set<String> ended = new HashSet<>();
-        for (AguiEvent event : events) {
-            if (event instanceof AguiEvent.TextMessageStart start) {
-                assertTrue(started.add(start.messageId()), "消息重复开始：" + start);
-            } else if (event instanceof AguiEvent.TextMessageContent content) {
-                assertTrue(started.contains(content.messageId()) && !ended.contains(content.messageId()),
-                    "内容落在未开始或已结束的消息上：" + content);
-            } else if (event instanceof AguiEvent.TextMessageEnd end) {
-                assertTrue(ended.add(end.messageId()), "消息重复结束：" + end);
-            } else if (event instanceof AguiEvent.RunFinished) {
-                assertEquals(started, ended, "运行结束时仍有未结束的消息");
-            }
-        }
     }
 
     private static int indexOf(List<AgentEvent> events, Class<? extends AgentEvent> type) {
