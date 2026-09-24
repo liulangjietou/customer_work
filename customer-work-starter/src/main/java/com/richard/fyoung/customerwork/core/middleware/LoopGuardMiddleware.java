@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.core.middleware;
 
 import com.richard.fyoung.customerwork.capability.handoff.HandoffService;
+import com.richard.fyoung.customerwork.core.agent.ConversationTurn;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.config.properties.HooksProperties;
 import com.richard.fyoung.customerwork.observability.AuditSink;
@@ -57,6 +58,17 @@ import java.util.function.Function;
  * 本身就是逐片流式发出的。因此说明既以增量补进收尾文本块，也追加在最终结果上——两类消费方各看各的事件，
  * 各自恰好看到一次。与 {@code SelfCorrectionMiddleware} 注释里记下的是同一个坑，补法与它共用
  * {@link AnswerAppendix}。</p>
+ *
+ * <h3>只有对用户说话的那次调用才处置</h3>
+ * <p>替本轮干活的内部调用（多专家的分诊器 / 专家 / 归纳器、Harness 子智能体）转不出来时，答复不由它交给用户，
+ * 它所在的会话也不是用户的会话。这里只记指标与审计，再把去向说明与转人工上报给本轮的组织者
+ * （见 {@link ConversationTurn}）——此前在这些调用里转人工，建出来的是一张没人能接到用户的工单，
+ * 说明则追加在专家的中间结论上、归纳器改写时可以丢掉。</p>
+ *
+ * <p>子智能体经 {@code agent_spawn} 同步执行时，它的细粒度事件<b>只</b>转发进父智能体的事件流
+ * （带 {@link AgentEvent#getSource()}），不经过它自己的中间件链。于是父智能体这一层是它转不出来的唯一观测点：
+ * 这些事件记在子智能体自己的账上、以它的名义记指标与审计，<b>绝不左右父智能体这一轮</b>——
+ * 父智能体完全可能拿到子智能体的收尾后照常答完。</p>
  *
  * <h3>重复调用为什么只告警不拦截</h3>
  * <p>拦下重复调用需要让模型知道「别再这样调了」，而中间件改事件流<b>改不了写回
@@ -119,19 +131,14 @@ public class LoopGuardMiddleware implements MiddlewareBase {
 
     private Flux<AgentEvent> observe(Agent agent, RuntimeContext ctx, AgentEvent event, TurnState state) {
         try {
-            if (event instanceof ToolCallStartEvent start) {
-                state.toolNames.put(keyOf(start.getToolCallId()), start.getToolCallName());
+            String source = event.getSource();
+            if (source != null) {
+                // 子智能体转发进来的事件：记在它自己的账上，只观测，不左右本轮
+                observeForwarded(ctx, source, event,
+                    state.forwarded.computeIfAbsent(source, k -> new CallTally()));
                 return Flux.just(event);
             }
-            if (event instanceof ToolCallDeltaEvent delta) {
-                if (delta.getDelta() != null) {
-                    state.arguments.computeIfAbsent(keyOf(delta.getToolCallId()), k -> new StringBuilder())
-                        .append(delta.getDelta());
-                }
-                return Flux.just(event);
-            }
-            if (event instanceof ToolCallEndEvent end) {
-                countCall(agent, ctx, end, state);
+            if (tally(agentName(agent), ctx, event, state.calls)) {
                 return Flux.just(event);
             }
             if (event instanceof ExceedMaxItersEvent exceeded) {
@@ -164,53 +171,102 @@ public class LoopGuardMiddleware implements MiddlewareBase {
         }
     }
 
+    /** 转发进来的子智能体事件：工具调用照常计数，转不出来只记指标与审计。 */
+    private void observeForwarded(RuntimeContext ctx, String source, AgentEvent event, CallTally tally) {
+        if (tally(source, ctx, event, tally)) {
+            return;
+        }
+        if (event instanceof ExceedMaxItersEvent exceeded) {
+            // 转发链路上父智能体这一层是唯一观测点（子智能体自己的中间件链看不到这个事件），故在这里记一次
+            recordExhausted(source, sessionId(ctx), true, exceeded, tally);
+        }
+    }
+
+    /** 工具调用三件套计入给定的账；不是工具调用事件时返回 false。 */
+    private boolean tally(String agentLabel, RuntimeContext ctx, AgentEvent event, CallTally tally) {
+        if (event instanceof ToolCallStartEvent start) {
+            tally.toolNames.put(keyOf(start.getToolCallId()), start.getToolCallName());
+            return true;
+        }
+        if (event instanceof ToolCallDeltaEvent delta) {
+            if (delta.getDelta() != null) {
+                tally.arguments.computeIfAbsent(keyOf(delta.getToolCallId()), k -> new StringBuilder())
+                    .append(delta.getDelta());
+            }
+            return true;
+        }
+        if (event instanceof ToolCallEndEvent end) {
+            countCall(agentLabel, ctx, end, tally);
+            return true;
+        }
+        return false;
+    }
+
     /**
      * 一次工具调用完成：按「工具名 + 参数」计数。
      *
      * <p>参数一并计入签名是关键——同一个工具用<b>不同</b>参数连查五个订单是正常业务，
      * 只按工具名计数会把它误报成循环，而误报几次之后这个指标就没人看了。</p>
      */
-    private void countCall(Agent agent, RuntimeContext ctx, ToolCallEndEvent end, TurnState state) {
+    private void countCall(String agentLabel, RuntimeContext ctx, ToolCallEndEvent end, CallTally tally) {
         String callId = keyOf(end.getToolCallId());
         String name = end.getToolCallName() != null
-            ? end.getToolCallName() : state.toolNames.get(callId);
-        StringBuilder args = state.arguments.remove(callId);
-        state.toolNames.remove(callId);
+            ? end.getToolCallName() : tally.toolNames.get(callId);
+        StringBuilder args = tally.arguments.remove(callId);
+        tally.toolNames.remove(callId);
         if (name == null) {
             return;
         }
         String signature = name + "|" + (args == null ? "" : args.toString());
-        int times = state.callCounts.merge(signature, 1, Integer::sum);
+        int times = tally.callCounts.merge(signature, 1, Integer::sum);
         if (times != repeatedThreshold) {
             // 只在恰好触达阈值的那一次告警：继续涨下去每轮报一次，会把日志刷成噪音
             return;
         }
         metric(M_REPEATED);
         log.error("repeated identical tool call detected, code={}, agent={}, session={}, tool={}, times={}",
-            CODE_REPEATED, agentName(agent), sessionId(ctx), name, times);
+            CODE_REPEATED, agentLabel, sessionId(ctx), name, times);
         Map<String, Object> fields = new LinkedHashMap<>();
-        fields.put("agent", agentName(agent));
+        fields.put("agent", agentLabel);
         fields.put("session", sessionId(ctx));
         fields.put("tool", name);
         fields.put("times", times);
         audit(AUDIT_REPEATED, fields);
     }
 
-    /** 轮次用尽：记指标与审计，并把人接进来。 */
+    /**
+     * 轮次用尽：记指标与审计，并把人接进来。
+     *
+     * <p>内部调用只记录、再上报给本轮的组织者：去向说明要接在用户真正收到的最终答复上，
+     * 转人工要落在用户自己的会话上，而这两样它都不掌握。</p>
+     */
     private void onExhausted(Agent agent, RuntimeContext ctx, ExceedMaxItersEvent event, TurnState state) {
+        ConversationTurn owner = ConversationTurn.delegatedBy(ctx);
+        recordExhausted(agentName(agent), sessionId(ctx), owner != null, event, state.calls);
+        if (owner != null) {
+            owner.escalate(new ConversationTurn.Escalation(agentName(agent),
+                noticeEnabled ? notice.text() : null,
+                handoffOnExhausted ? handoffReason(event.getMaxIters()) : null));
+            return;
+        }
         state.exhausted = true;
+        handoff(sessionId(ctx), event.getMaxIters());
+    }
+
+    /** 每一次转不出来的 Agent 调用恰好记一次：谁转不出来就以谁的名义记。 */
+    private void recordExhausted(String agentLabel, String session, boolean delegated,
+                                 ExceedMaxItersEvent event, CallTally tally) {
         metric(M_EXHAUSTED);
-        String session = sessionId(ctx);
-        log.error("agent iterations exhausted, code={}, agent={}, session={}, maxIters={}, tools={}",
-            CODE_EXHAUSTED, agentName(agent), session, event.getMaxIters(), state.callCounts.keySet());
+        log.error("agent iterations exhausted, code={}, agent={}, session={}, delegated={}, maxIters={}, tools={}",
+            CODE_EXHAUSTED, agentLabel, session, delegated, event.getMaxIters(), tally.callCounts.keySet());
         Map<String, Object> fields = new LinkedHashMap<>();
-        fields.put("agent", agentName(agent));
+        fields.put("agent", agentLabel);
         fields.put("session", session);
+        fields.put("delegated", delegated);
         fields.put("maxIters", event.getMaxIters());
         fields.put("currentIter", event.getCurrentIter());
-        fields.put("distinctToolCalls", state.callCounts.size());
+        fields.put("distinctToolCalls", tally.callCounts.size());
         audit(AUDIT_EXHAUSTED, fields);
-        handoff(session, event.getMaxIters());
     }
 
     /**
@@ -230,7 +286,7 @@ public class LoopGuardMiddleware implements MiddlewareBase {
     }
 
     /**
-     * 只读最终结果的消费方（{@code call()}：IM 渠道、评测、多专家）看到的说明：追加到收尾回复上。
+     * 只读最终结果的消费方（{@code call()}：IM 渠道、评测）看到的说明：追加到收尾回复上。
      *
      * <p>框架此时已经生成了收尾，追加而不是替换：那段话里可能有对用户有用的中间结论，
      * 整段丢掉等于把十轮的成果一起扔了。也不重建消息：框架标在上面的 {@code MAX_ITERATIONS}
@@ -272,11 +328,15 @@ public class LoopGuardMiddleware implements MiddlewareBase {
             return;
         }
         try {
-            handoffService.create(sessionId, "自动应答轮次用尽（maxIters=" + maxIters + "），需人工接手");
+            handoffService.create(sessionId, handoffReason(maxIters));
         } catch (Exception e) {
             log.error("handoff on iterations exhausted failed, code={}, session={}",
                 CODE_EXHAUSTED, sessionId, e);
         }
+    }
+
+    private static String handoffReason(int maxIters) {
+        return "自动应答轮次用尽（maxIters=" + maxIters + "），需人工接手";
     }
 
     private void audit(String type, Map<String, Object> fields) {
@@ -309,11 +369,18 @@ public class LoopGuardMiddleware implements MiddlewareBase {
         return agent == null ? "?" : agent.getName();
     }
 
-    /** 一轮对话的观测状态。 */
-    private static final class TurnState {
+    /** 一个 Agent 在本轮里的工具调用账：按调用 id 拼参数，按「工具名 + 参数」计次。 */
+    private static final class CallTally {
         private final Map<String, String> toolNames = new HashMap<>();
         private final Map<String, StringBuilder> arguments = new HashMap<>();
         private final Map<String, Integer> callCounts = new HashMap<>();
+    }
+
+    /** 一轮对话的观测状态。 */
+    private static final class TurnState {
+        private final CallTally calls = new CallTally();
+        /** 转发进来的子智能体事件，按来源各记一本账，与本轮自己的调用互不相混。 */
+        private final Map<String, CallTally> forwarded = new HashMap<>();
         private boolean exhausted;
         /** 本轮是否流出过非空正文：流式消费方据此决定还看不看最终结果。 */
         private boolean textStreamed;

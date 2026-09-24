@@ -40,6 +40,9 @@ import java.util.Set;
 @Component
 public class AgentGovernanceAssembler {
 
+    /** 会话号缺省时的归并值：框架状态槽位与 {@link ConversationTurn} 共用这一个口径。 */
+    public static final String DEFAULT_SESSION = "default";
+
     private final CustomerWorkProperties properties;
     private final TenantResolver tenantResolver;
     /** 可插拔 Middleware：本库内置 + 下游自定义的所有 {@link MiddlewareBase} Bean。 */
@@ -134,9 +137,12 @@ public class AgentGovernanceAssembler {
             ? identity.channelCode() : fallbackChannel;
         AgentInvocationIdentity invocation = identity == null
             ? null : identity.forInvocation(channel, sessionId, agentCode);
+        String effectiveSession = sessionId == null || sessionId.isBlank() ? DEFAULT_SESSION : sessionId;
         RuntimeContext.Builder b = RuntimeContext.builder()
             .userId(tenantResolver.resolve(sessionId))
-            .sessionId(sessionId == null || sessionId.isBlank() ? "default" : sessionId);
+            .sessionId(effectiveSession);
+        // 本次调用就在对用户说话：框架派生子调用上下文时会复制它、只换会话号，子调用据此认出自己是内部调用
+        b.put(ConversationTurn.class, ConversationTurn.open(effectiveSession));
         // org 维度：写入 KV 命名空间，实现 session/user/org 多维隔离
         String org = properties.getHarness().getOrg();
         if (org != null && !org.isBlank()) {
