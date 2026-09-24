@@ -78,8 +78,11 @@ class AgentAssemblyAlignmentTest {
         for (Path file : agentBuildingFiles()) {
             checked.add(file);
             String source = Files.readString(file, StandardCharsets.UTF_8);
-            boolean assembled = ASSEMBLY_MARKERS.stream().anyMatch(source::contains);
-            if (!assembled) {
+            // 按调用点计数而不是按文件判定：同一个文件里新增第二个建 Agent 的位置（如意图分类器）
+            // 而漏了装配，按文件判定仍是绿的——文件里已经有一处装配证据了
+            long builders = occurrences(source, AGENT_BUILDER);
+            long assemblies = ASSEMBLY_MARKERS.stream().mapToLong(m -> occurrences(source, m)).sum();
+            if (assemblies < builders) {
                 offenders.add(file);
             }
         }
@@ -88,7 +91,7 @@ class AgentAssemblyAlignmentTest {
             "应至少扫描到 4 个建 Agent 的文件，实际 " + checked.size() + " —— 扫描路径可能失效了");
 
         if (!offenders.isEmpty()) {
-            fail("以下文件构建了 Agent 但没有装配治理中间件（token 计量/敏感词/工具审批/脱敏/注入防护会在这条路径上整体失效）：\n"
+            fail("以下文件构建 Agent 的次数多于治理装配的次数（token 计量/敏感词/工具审批/脱敏/注入防护会在这条路径上整体失效）：\n"
                 + offenders.stream().map(Path::toString).reduce("", (a, b) -> a + "  - " + b + "\n")
                 + "修法：注入 AgentGovernanceAssembler 并在 build() 前调用 applyTo(builder)。"
                 + "确实不需要的，加进 EXEMPT 并写明理由。");
@@ -145,6 +148,14 @@ class AgentAssemblyAlignmentTest {
         assertTrue(source.contains("HumanApprovalMiddleware"), "装配器漏了工具级人工确认");
         assertTrue(source.contains("pluggableMiddlewares"),
             "装配器漏了可插拔 MiddlewareBase 集合——敏感词、脱敏、租户、分段耗时与 token 计量都在这一批里");
+    }
+
+    private static long occurrences(String source, String token) {
+        long count = 0;
+        for (int i = source.indexOf(token); i >= 0; i = source.indexOf(token, i + token.length())) {
+            count++;
+        }
+        return count;
     }
 
     /** 找出所有真正构建 Agent 的生产源文件（跳过豁免清单）。 */

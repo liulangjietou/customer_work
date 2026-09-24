@@ -671,7 +671,8 @@ public class CustomerServiceService {
                 log.info("[session {}] structured intent classification: {}", sessionId, userText);
                 String intentSessionId = "intent:" + sessionId;
                 return Mono.using(
-                    () -> agentFactory.createAgent(intentSessionId),
+                    // 专用轻量分类 Agent：不带业务工具、不落会话状态，见 createIntentClassifierAgent
+                    () -> agentFactory.createIntentClassifierAgent(intentSessionId),
                     intentAgent -> {
                         RuntimeContext ctx = agentFactory.contextFor(intentSessionId);
                         String prompt = "请判断以下用户消息的意图，并调用工具输出结构化结果，不要直接用文本回答。"
