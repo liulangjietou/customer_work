@@ -16,7 +16,10 @@ import org.springframework.boot.autoconfigure.web.ServerProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.util.StringUtils;
+
+import java.util.concurrent.ThreadPoolExecutor;
 
 /**
  * 注册与登录防滥用能力的装配。
@@ -37,6 +40,19 @@ public class AuthGuardConfig {
 
     /** Redis 键前缀与配额计数器一致，靠各自的业务键前缀区分用途。 */
     private static final String COUNTER_KEY_PREFIX = "cw:counter:";
+
+    /** 找回密码发信线程池的 Bean 名，注入方按它取用。 */
+    public static final String PASSWORD_RESET_MAIL_EXECUTOR = "passwordResetMailExecutor";
+
+    /**
+     * 发信线程数：单次发信受 SMTP 超时（默认 5 秒）约束，而每个邮箱有冷却、每个来源有限流，
+     * 正常流量用不满两个线程；刻意不配大，线程池不该成为放大对外发信量的地方。
+     */
+    private static final int PASSWORD_RESET_MAIL_WORKERS = 2;
+    /** 排队上限：SMTP 挂住时吸收突发，满了拒绝并记日志，而不是无界堆积占内存。 */
+    private static final int PASSWORD_RESET_MAIL_QUEUE_CAPACITY = 200;
+    /** 停机时给已受理的发信留的收尾时间：已经扣了额度的请求，尽量别让用户白等一个冷却周期。 */
+    private static final int PASSWORD_RESET_MAIL_SHUTDOWN_AWAIT_SECONDS = 10;
 
     /**
      * 注册限流与登录锁定共用的窗口计数器。
@@ -131,6 +147,28 @@ public class AuthGuardConfig {
                                                              WindowCounter authGuardWindowCounter) {
         return new EmailVerificationService(properties, emailVerificationStore, adminMailSender,
             authGuardWindowCounter);
+    }
+
+    /**
+     * 找回密码的发信线程池。
+     *
+     * <p>存在的唯一理由是反枚举：发信留在请求线程上，匹配与不匹配的账号在响应耗时与成败上
+     * 就能被区分（见 {@code PasswordResetService} 类注释）。注册发码不走它，那条链路刻意同步报错。</p>
+     *
+     * <p>有界 + {@code AbortPolicy}：拒绝由调用方吞掉记日志，而不是用 CallerRuns 退回请求线程——
+     * 那样恰好在"SMTP 慢、队列满"时把计时差重新带回来。</p>
+     */
+    @Bean(PASSWORD_RESET_MAIL_EXECUTOR)
+    public ThreadPoolTaskExecutor passwordResetMailExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(PASSWORD_RESET_MAIL_WORKERS);
+        executor.setMaxPoolSize(PASSWORD_RESET_MAIL_WORKERS);
+        executor.setQueueCapacity(PASSWORD_RESET_MAIL_QUEUE_CAPACITY);
+        executor.setThreadNamePrefix("password-reset-mail-");
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(PASSWORD_RESET_MAIL_SHUTDOWN_AWAIT_SECONDS);
+        return executor;
     }
 
     @Bean
