@@ -25,6 +25,10 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.RejectedExecutionException;
+
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -34,6 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -66,6 +71,8 @@ class PasswordResetServiceTest {
     private WindowCounter counter;
     private LoginAttemptGuard loginAttemptGuard;
     private OperationLogMapper operationLogMapper;
+    /** 已投递、尚未执行的发信任务：由用例显式执行，才能区分"请求线程上发的"与"投递出去发的"。 */
+    private List<Runnable> pendingMail;
     private PasswordResetService service;
 
     @BeforeEach
@@ -89,13 +96,14 @@ class PasswordResetServiceTest {
         when(passwordEncoder.encode(any())).thenReturn(ENCODED);
         when(userMapper.updateById(any(SysUser.class))).thenReturn(1);
         when(userMapper.incrementAuthEpoch(anyLong())).thenReturn(1);
+        pendingMail = new ArrayList<>();
 
         // 真实的 EmailVerificationService 而不是 mock：这条链路要验的正是"额度到底扣没扣"、
         // "验证码到底废没废"，注了 mock 只能验到"Service 记得调它"
         service = new PasswordResetService(userMapper, passwordEncoder,
             new EmailVerificationService(properties, emailStore, mailSender, counter),
             captchaService, mailSender, sessionRevocationService, loginAttemptGuard,
-            operationLogMapper);
+            operationLogMapper, pendingMail::add);
     }
 
     // ---------- 发码 ----------
@@ -105,6 +113,7 @@ class PasswordResetServiceTest {
         givenAccount(localUser());
 
         int ttl = service.sendCode(codeRequest(USERNAME, EMAIL), IP);
+        drainMail();
 
         assertEquals(properties.getEmailVerification().getTtlSeconds(), ttl);
         EmailVerificationCode stored = emailStore.get(EmailCodePurpose.PASSWORD_RESET, EMAIL);
@@ -128,6 +137,7 @@ class PasswordResetServiceTest {
         givenAccount(localUser());
 
         service.sendCode(codeRequest(USERNAME, EMAIL), IP);
+        drainMail();
 
         ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
         verify(mailSender).send(any(), any(), body.capture());
@@ -140,6 +150,7 @@ class PasswordResetServiceTest {
         givenAccount(null);
 
         int ttl = service.sendCode(codeRequest("nobody", EMAIL), IP);
+        drainMail();
 
         assertEquals(properties.getEmailVerification().getTtlSeconds(), ttl,
             "返回值必须与账号存在时完全一致");
@@ -157,6 +168,7 @@ class PasswordResetServiceTest {
         givenAccount(localUser());
 
         service.sendCode(codeRequest(USERNAME, "attacker@example.com"), IP);
+        drainMail();
 
         assertNull(emailStore.get(EmailCodePurpose.PASSWORD_RESET, "attacker@example.com"));
         assertNull(emailStore.get(EmailCodePurpose.PASSWORD_RESET, EMAIL));
@@ -195,6 +207,7 @@ class PasswordResetServiceTest {
         givenAccount(ldap);
 
         int ttl = service.sendCode(codeRequest(USERNAME, EMAIL), IP);
+        drainMail();
 
         assertEquals(properties.getEmailVerification().getTtlSeconds(), ttl);
         assertNull(emailStore.get(EmailCodePurpose.PASSWORD_RESET, EMAIL), "域账号不该拿到重置码");
@@ -210,6 +223,7 @@ class PasswordResetServiceTest {
         givenAccount(disabled);
 
         service.sendCode(codeRequest(USERNAME, EMAIL), IP);
+        drainMail();
 
         assertNull(emailStore.get(EmailCodePurpose.PASSWORD_RESET, EMAIL));
         ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
@@ -240,6 +254,76 @@ class PasswordResetServiceTest {
         assertDoesNotThrow(() -> service.sendCode(codeRequest(USERNAME, EMAIL), IP));
     }
 
+    /**
+     * 任何分支都不能在请求线程上碰 SMTP。
+     *
+     * <p>返回值一致只是枚举防护的一半：匹配的账号同步发信要几百毫秒到数秒，对不上的请求
+     * 查完库就返回，攻击者掐表就能分出"用户名和邮箱是不是一对"。OA 与禁用账号的说明信同理。
+     * 断言的是"sendCode 返回时一封信都还没发"，而不是去量耗时——计时断言在 CI 上不稳定，
+     * 而线程归属是计时差的根因，直接钉住根因。</p>
+     */
+    @Test
+    void sendCode_shouldNotTouchSmtpOnTheCallingThreadInAnyBranch() {
+        SysUser ldap = localUser();
+        ldap.setLoginType(SysUser.LOGIN_TYPE_LDAP);
+        SysUser disabled = localUser();
+        disabled.setStatus(0);
+        when(userMapper.selectOne(any())).thenReturn(localUser()).thenReturn(ldap).thenReturn(disabled);
+
+        service.sendCode(codeRequest(USERNAME, EMAIL), IP);
+        service.sendCode(codeRequest(USERNAME, "ldap@example.com"), "203.0.113.32");
+        service.sendCode(codeRequest(USERNAME, "disabled@example.com"), "203.0.113.33");
+
+        verify(mailSender, never()).send(any(), any(), any());
+        assertNull(emailStore.get(EmailCodePurpose.PASSWORD_RESET, EMAIL),
+            "连验证码存储也属于匹配分支独有的外部 I/O，同样不该在请求线程上做");
+
+        drainMail();
+        verify(mailSender).send(eq(EMAIL), eq(EmailCodePurpose.PASSWORD_RESET.mailSubject()), any());
+        assertNotNull(emailStore.get(EmailCodePurpose.PASSWORD_RESET, EMAIL), "投递之后码才落存储");
+    }
+
+    /**
+     * SMTP 故障不能让匹配的账号换一种响应。
+     *
+     * <p>此前匹配分支发信失败会抛 {@link ResultCode#EMAIL_CODE_SEND_FAILED}，对不上的请求照常成功——
+     * 邮件服务一抖，这个接口就成了精确的枚举器。发信失败只记日志并清掉那份码，不留死码。</p>
+     */
+    @Test
+    void sendCode_shouldReturnTheSameOutcomeWhenSmtpFails() {
+        givenAccount(localUser());
+        doThrow(new IllegalStateException("smtp down"))
+            .when(mailSender).send(any(), any(), any());
+
+        int ttl = assertDoesNotThrow(() -> service.sendCode(codeRequest(USERNAME, EMAIL), IP));
+
+        assertEquals(properties.getEmailVerification().getTtlSeconds(), ttl);
+        drainMail();
+        verify(mailSender).send(eq(EMAIL), any(), any());
+        assertNull(emailStore.get(EmailCodePurpose.PASSWORD_RESET, EMAIL), "发信失败的码必须作废，不留死码");
+    }
+
+    /**
+     * 发信队列满被拒，同样不能换一种响应。
+     *
+     * <p>拒绝只会发生在要发信的分支上；抛出去就是在"SMTP 慢、队列满"时重新开出一个存在性探针。</p>
+     */
+    @Test
+    void sendCode_shouldReturnTheSameOutcomeWhenMailQueueIsFull() {
+        givenAccount(localUser());
+        PasswordResetService saturated = new PasswordResetService(userMapper, passwordEncoder,
+            new EmailVerificationService(properties, emailStore, mailSender, counter),
+            captchaService, mailSender, sessionRevocationService, loginAttemptGuard,
+            operationLogMapper, task -> {
+                throw new RejectedExecutionException("queue full");
+            });
+
+        int ttl = assertDoesNotThrow(() -> saturated.sendCode(codeRequest(USERNAME, EMAIL), IP));
+
+        assertEquals(properties.getEmailVerification().getTtlSeconds(), ttl);
+        verify(mailSender, never()).send(any(), any(), any());
+    }
+
     @Test
     void sendCode_shouldRefuseWhenMailIsNotAvailable() {
         when(mailSender.available()).thenReturn(false);
@@ -256,6 +340,7 @@ class PasswordResetServiceTest {
         givenAccount(localUser());
 
         service.sendCode(codeRequest(USERNAME, "Richard@Example.COM"), IP);
+        drainMail();
 
         assertNotNull(emailStore.get(EmailCodePurpose.PASSWORD_RESET, EMAIL));
     }
@@ -532,6 +617,13 @@ class PasswordResetServiceTest {
     }
 
     // ---------- 辅助 ----------
+
+    /** 执行已投递、尚未执行的发信任务，模拟发信线程池把它们跑完。 */
+    private void drainMail() {
+        List<Runnable> tasks = new ArrayList<>(pendingMail);
+        pendingMail.clear();
+        tasks.forEach(Runnable::run);
+    }
 
     private void givenAccount(SysUser user) {
         when(userMapper.selectOne(any())).thenReturn(user);

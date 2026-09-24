@@ -5,6 +5,7 @@ import com.richard.fyoung.customeradmin.auth.dto.PasswordResetEmailCodeRequest;
 import com.richard.fyoung.customeradmin.auth.dto.PasswordResetRequest;
 import com.richard.fyoung.customeradmin.auth.email.EmailCodePurpose;
 import com.richard.fyoung.customeradmin.auth.email.EmailVerificationService;
+import com.richard.fyoung.customeradmin.auth.guard.AuthGuardConfig;
 import com.richard.fyoung.customeradmin.auth.guard.CaptchaService;
 import com.richard.fyoung.customeradmin.auth.guard.LoginAttemptGuard;
 import com.richard.fyoung.customeradmin.auth.guard.PasswordPolicy;
@@ -18,6 +19,7 @@ import com.richard.fyoung.customeradmin.system.user.mapper.SysUserMapper;
 import com.richard.fyoung.customerwork.safety.tenant.CrossTenantOperations;
 import com.richard.fyoung.customerwork.safety.tenant.TenantContext;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,6 +27,8 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.Objects;
+import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 
 /**
  * 凭注册邮箱找回登录密码。
@@ -47,6 +51,16 @@ import java.util.Objects;
  *       信只有邮箱的主人收得到，响应则是谁问谁得。</li>
  * </ol>
  *
+ * <p><b>含糊还要覆盖耗时与发信结果，所以发信一律异步</b>：同步发信时，匹配的账号要等一次
+ * SMTP 往返（几百毫秒到数秒），对不上的请求查完库就返回，掐表即可区分；SMTP 故障时
+ * 也只有匹配分支会失败。因此 {@link #sendCode} 的所有分支都只做到"查账号"为止，
+ * 验证码落存储与发信（含说明信）交给 {@code passwordResetMailExecutor}，
+ * 发信失败只记日志并作废那份码，HTTP 响应与 SMTP 完全解耦。</p>
+ *
+ * <p>注册发码刻意保持同步报错（{@code RegistrationGuard#sendEmailCode}）：注册在发码前
+ * 就会明确提示"邮箱已被占用"，本来就不隐藏邮箱是否存在，同步报错不泄露任何新信息，
+ * 而"验证码没发出去"让用户当场看到才是那条链路的可用性底线。</p>
+ *
  * <p><b>不设独立开关</b>：能力跟随 {@link AdminMailSender#available()}。多一个
  * {@code enabled} 配置项就多一个漏配点，而这个功能配错的后果是"用户永远找不回密码"，
  * 且没有任何人会收到告警。</p>
@@ -64,13 +78,15 @@ public class PasswordResetService {
     private final SessionRevocationService sessionRevocationService;
     private final LoginAttemptGuard loginAttemptGuard;
     private final OperationLogMapper operationLogMapper;
+    private final Executor mailExecutor;
 
     public PasswordResetService(SysUserMapper userMapper, PasswordEncoder passwordEncoder,
                                 EmailVerificationService emailVerificationService,
                                 CaptchaService captchaService, AdminMailSender mailSender,
                                 SessionRevocationService sessionRevocationService,
                                 LoginAttemptGuard loginAttemptGuard,
-                                OperationLogMapper operationLogMapper) {
+                                OperationLogMapper operationLogMapper,
+                                @Qualifier(AuthGuardConfig.PASSWORD_RESET_MAIL_EXECUTOR) Executor mailExecutor) {
         this.userMapper = userMapper;
         this.passwordEncoder = passwordEncoder;
         this.emailVerificationService = emailVerificationService;
@@ -79,6 +95,7 @@ public class PasswordResetService {
         this.sessionRevocationService = sessionRevocationService;
         this.loginAttemptGuard = loginAttemptGuard;
         this.operationLogMapper = operationLogMapper;
+        this.mailExecutor = mailExecutor;
     }
 
     /**
@@ -94,9 +111,10 @@ public class PasswordResetService {
     /**
      * 向账号登记的邮箱发一封重置验证码。
      *
-     * <p>顺序是这条链路的核心，不能调换：图形码 → 扣额度 → 查账号 → 发信。
+     * <p>顺序是这条链路的核心，不能调换：图形码 → 扣额度 → 查账号 → 投递发信。
      * 图形码在最前是因为发信是唯一会向站外第三方产生副作用的匿名操作，脚本必须挡在它前面；
-     * 扣额度在查账号之前，是为了让"存在"与"不存在"两种请求在限流上不可区分。</p>
+     * 扣额度在查账号之前，是为了让"存在"与"不存在"两种请求在限流上不可区分。
+     * 发信只投递不等待，是为了让两种请求在耗时与成败上同样不可区分（见类注释）。</p>
      *
      * @param request  用户名 + 邮箱 + 图形验证码
      * @param clientIp 来源 IP
@@ -121,18 +139,51 @@ public class PasswordResetService {
             return emailVerificationService.codeTtlSeconds();
         }
         if (!SysUser.LOGIN_TYPE_LOCAL.equals(user.getLoginType())) {
-            notifyUnresettable(user, "该账号是 OA 域账号，登录密码由企业域控统一管理，本平台既不保存也无法重置。"
-                + "请使用 OA 账号登录入口，或联系企业 IT 重置域账号密码。");
+            dispatchMail(user, () -> notifyUnresettable(user, "该账号是 OA 域账号，登录密码由企业域控统一管理，本平台既不保存也无法重置。"
+                + "请使用 OA 账号登录入口，或联系企业 IT 重置域账号密码。"));
             return emailVerificationService.codeTtlSeconds();
         }
         if (!enabled(user)) {
-            notifyUnresettable(user, "该账号当前已被禁用，重置密码后仍然无法登录，因此本次未发送验证码。"
-                + "请联系管理员恢复账号后再试。");
+            dispatchMail(user, () -> notifyUnresettable(user, "该账号当前已被禁用，重置密码后仍然无法登录，因此本次未发送验证码。"
+                + "请联系管理员恢复账号后再试。"));
             return emailVerificationService.codeTtlSeconds();
         }
-        emailVerificationService.issueAndSend(EmailCodePurpose.PASSWORD_RESET, email);
-        log.info("password reset code sent, userId={}", user.getId());
+        dispatchMail(user, () -> deliverResetCode(user, email));
         return emailVerificationService.codeTtlSeconds();
+    }
+
+    /**
+     * 把发信投递到独立线程池，请求线程不等结果。
+     *
+     * <p>队列满被拒只记日志、不向上抛：拒绝只会发生在匹配分支上，抛出去就是一个新的存在性探针。
+     * 代价是这次用户收不到信，按冷却重试即可——与 SMTP 故障的处理口径一致。</p>
+     */
+    private void dispatchMail(SysUser user, Runnable delivery) {
+        try {
+            mailExecutor.execute(delivery);
+        } catch (RejectedExecutionException e) {
+            log.error("password reset mail dispatch rejected, code={}, userId={}",
+                "AUTH-PASSWORD-RESET-MAIL-REJECTED", user.getId(), e);
+        }
+    }
+
+    /**
+     * 在发信线程上生成并发出重置码。
+     *
+     * <p>发信失败时 {@link EmailVerificationService#issueAndSend} 已作废刚写入的码并记下 error，
+     * 这里只补一条带 userId 的关联日志，不重复报错。</p>
+     */
+    private void deliverResetCode(SysUser user, String email) {
+        try {
+            emailVerificationService.issueAndSend(EmailCodePurpose.PASSWORD_RESET, email);
+            log.info("password reset code sent, userId={}", user.getId());
+        } catch (BizException e) {
+            log.info("password reset code not delivered, reason={}, userId={}",
+                e.getResultCode().name(), user.getId());
+        } catch (Exception e) {
+            log.error("password reset code delivery failed, code={}, userId={}",
+                "AUTH-PASSWORD-RESET-DELIVERY-FAIL", user.getId(), e);
+        }
     }
 
     /**
@@ -263,7 +314,7 @@ public class PasswordResetService {
      * 而我们又不能在响应里告诉他原因（那就成了账号类型探针）。信只有邮箱的主人收得到，
      * 说明原因不泄露给任何第三方。</p>
      *
-     * <p>发送失败只记日志：这是旁路通知，与验证码那封相反——那封发不出去必须让用户当场看到失败。</p>
+     * <p>跑在发信线程上，发送失败只记日志：请求早已返回，也不能让它影响响应（见类注释）。</p>
      */
     private void notifyUnresettable(SysUser user, String reason) {
         // 邮箱一定有值：走到这里意味着它刚与请求里的地址比对成功（matchesEmail）

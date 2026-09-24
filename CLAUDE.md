@@ -1057,7 +1057,11 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   发码时**账号对不上也照扣发信额度**（先查账号再扣的话，「有没有被限流」本身就是存在性探针，
   为此把 `EmailVerificationService#sendCode` 拆成了 `reserveSendQuota` + `issueAndSend`）；
   重置时账号不匹配、验证码错、验证码过期三者合并成 `PASSWORD_RESET_REJECTED(30015)`，连文案都一样；
-  **不能重置的账号（OA 域账号、已禁用）改发一封说明信**而不是在响应里说明——信只有邮箱的主人收得到。
+  **不能重置的账号（OA 域账号、已禁用）改发一封说明信**而不是在响应里说明——信只有邮箱的主人收得到；
+  **发信（重置码与说明信）一律投递到 `passwordResetMailExecutor` 异步执行**，请求线程只做到查账号为止——
+  同步发信时匹配分支多一次 SMTP 往返、SMTP 故障时只有匹配分支报错，就是计时与成败两条枚举侧信道；
+  注册发码刻意保持同步报错（注册本就明示邮箱占用）。只断言返回值一致照不出这类侧信道，
+  `PasswordResetServiceTest` 用手动排空的执行器断言「sendCode 返回时一封信都还没发」。
   另有四条：**账号匹配判定必须排在验证码核验之前**（否则任何人拿一个错的用户名反复提交，
   就能把受害者手里那份真码的重试次数耗光）；**图形码在发码那一步无条件校验**，不看
   `captchaRequired()`——注册在内网可以省掉它（要过审核、建出来的号零权限），
