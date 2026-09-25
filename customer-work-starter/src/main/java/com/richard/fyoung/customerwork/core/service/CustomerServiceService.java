@@ -576,6 +576,12 @@ public class CustomerServiceService {
                     // 就会在模型 IO 线程上跑下游的敏感词过滤与 SSE 写出，拖慢模型侧的 chunk 读取
                     .publishOn(reactor.core.scheduler.Schedulers.boundedElastic())
                     .mapNotNull(event -> {
+                        // 子智能体经 agent_spawn 同步执行时，它的事件带 source 转发进本流：那是交给主智能体的中间材料，
+                        // 主智能体会拿它的结果组织自己的答复。H5 没有「子智能体卡片」，下发只会把同一件事说两遍，
+                        // 还夹着主智能体没采纳的说法——只下发、只记主智能体自己的（落库、写缓存、收尾判定取的都是这一份）
+                        if (event.getSource() != null) {
+                            return null;
+                        }
                         // 正文增量：只认 TextBlock，思考过程（THINKING_BLOCK_DELTA）不下发给用户
                         if (event instanceof TextBlockDeltaEvent delta) {
                             String text = delta.getDelta();

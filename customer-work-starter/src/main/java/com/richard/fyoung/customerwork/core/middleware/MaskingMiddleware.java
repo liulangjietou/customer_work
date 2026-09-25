@@ -85,8 +85,9 @@ public class MaskingMiddleware implements MiddlewareBase {
     private Flux<AgentEvent> maskOutboundEvent(AgentEvent event, OutboundStreamState state) {
         try {
             if (event instanceof TextBlockDeltaEvent delta) {
-                TextBlockBuffer buffer = state.blocks.computeIfAbsent(delta.getBlockId(),
-                    key -> new TextBlockBuffer(delta.getReplyId(), delta.getBlockId()));
+                TextBlockBuffer buffer = state.blocks.computeIfAbsent(
+                    ForwardedText.blockKey(delta.getSource(), delta.getBlockId()),
+                    key -> new TextBlockBuffer(delta.getSource(), delta.getReplyId(), delta.getBlockId()));
                 if (!buffer.overflowed) {
                     if (buffer.text.length() + delta.getDelta().length() > MAX_BLOCK_CHARS) {
                         buffer.overflowed = true;
@@ -100,7 +101,7 @@ public class MaskingMiddleware implements MiddlewareBase {
                 return Flux.empty();
             }
             if (event instanceof TextBlockEndEvent end) {
-                TextBlockBuffer buffer = state.blocks.remove(end.getBlockId());
+                TextBlockBuffer buffer = state.blocks.remove(ForwardedText.blockKey(end.getSource(), end.getBlockId()));
                 return buffer == null ? Flux.just(end) : flushBlock(buffer, end);
             }
             if (event instanceof AgentResultEvent result) {
@@ -125,7 +126,7 @@ public class MaskingMiddleware implements MiddlewareBase {
         if (!original.equals(masked)) {
             log.info("[MASK] outbound stream block masked, blockId={}", buffer.blockId);
         }
-        return Flux.just(new TextBlockDeltaEvent(buffer.replyId, buffer.blockId, masked), end);
+        return Flux.just(buffer.delta(masked), end);
     }
 
     /** 上游异常地未发送 block-end 时，流完成仍必须 flush，不能吞尾巴或绕过脱敏。 */
@@ -136,7 +137,7 @@ public class MaskingMiddleware implements MiddlewareBase {
                 continue;
             }
             String original = buffer.text.toString();
-            remaining.add(new TextBlockDeltaEvent(buffer.replyId, buffer.blockId, masker.mask(original)));
+            remaining.add(buffer.delta(masker.mask(original)));
         }
         state.blocks.clear();
         return Flux.fromIterable(remaining);
@@ -182,15 +183,22 @@ public class MaskingMiddleware implements MiddlewareBase {
         private final Map<String, TextBlockBuffer> blocks = new LinkedHashMap<>();
     }
 
+    /** 一个文本块的整块缓冲；子智能体转发进来的块按来源另起一份，放出时沿用来源（见 {@link ForwardedText}）。 */
     private static final class TextBlockBuffer {
+        private final String source;
         private final String replyId;
         private final String blockId;
         private final StringBuilder text = new StringBuilder();
         private boolean overflowed;
 
-        private TextBlockBuffer(String replyId, String blockId) {
+        private TextBlockBuffer(String source, String replyId, String blockId) {
+            this.source = source;
             this.replyId = replyId;
             this.blockId = blockId;
+        }
+
+        private TextBlockDeltaEvent delta(String masked) {
+            return ForwardedText.delta(source, replyId, blockId, masked);
         }
     }
 

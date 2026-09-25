@@ -14,6 +14,7 @@ import com.richard.fyoung.customerwork.safety.correction.UnverifiedClaimTrace;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
+import io.agentscope.core.event.AgentEventEmitter;
 import io.agentscope.core.event.AgentResultEvent;
 import io.agentscope.core.event.ModelCallEndEvent;
 import io.agentscope.core.event.TextBlockDeltaEvent;
@@ -118,6 +119,21 @@ import java.util.function.Supplier;
  * <p>最终结果的消息身份、元数据与其余内容块原样保留（{@link AnswerAppendix#appendTo}）：框架标的结束原因要原样交给外层
  * 终止采集（轮次用尽时 H5 据此显示「答复尚未完成」），挂起的工具调用与消息 id 是 AG-UI 生成审批中断的依据。</p>
  *
+ * <h3>子智能体转发进来的事件</h3>
+ * <p>Harness 子智能体经 {@code agent_spawn} 同步执行时，它的细粒度事件只进主智能体的事件流、带
+ * {@link AgentEvent#getSource()}，它自己的中间件链只看得到开始 / 结果 / 结束。</p>
+ * <p><b>子智能体自己这一层不判</b>（{@link AgentEventEmitter#fromForwardingContext} 存在即是这种调用）：
+ * 它看不见自己的工具调用，trace 恒为空，查过退款进度得出的「款项已退」也会被当成编造——
+ * 拦下后在派生的 {@code sub-} 会话上转人工（没人接得到用户），还把澄清追加进交还主智能体的结果里。</p>
+ * <p><b>主智能体这一层在转发流上判</b>，两类事件分开处理：</p>
+ * <ul>
+ *   <li><b>正文原样放过、不判</b>：那是交给主智能体的中间材料，用户端不展示它。此前按主智能体的正文判，
+ *       子智能体一句没核实的「已退款」就会拦下整轮——澄清补在用户没见过的话后面，主智能体随后的答复被整段吞掉、
+ *       还转了人工。主智能体若照搬这句话，拦在它自己的正文上。</li>
+ *   <li><b>工具调用计入本轮依据</b>：子智能体查到的真实状态随工具结果交回主智能体，同一轮里主智能体转述有依据，
+ *       与它亲自查了一样。排除在外会把正确的转述当成编造拦下。</li>
+ * </ul>
+ *
  * @author owlzhangfq@gmail.com
  */
 @Component
@@ -195,6 +211,15 @@ public class SelfCorrectionMiddleware implements MiddlewareBase {
         if (!enabled || paymentKeywords.isEmpty()) {
             return next.apply(input);
         }
+        return Flux.deferContextual(cv -> AgentEventEmitter.fromForwardingContext(cv).isPresent()
+            // 本次调用的事件正转发给上层（同步 spawn 的子智能体）：这一层看不见自己的工具调用、答复也不直接给用户，
+            // 判了只会误拦。由上层在转发流上判（见类注释）
+            ? next.apply(input)
+            : guarded(agent, ctx, input, next));
+    }
+
+    private Flux<AgentEvent> guarded(Agent agent, RuntimeContext ctx, AgentInput input,
+                                     Function<AgentInput, Flux<AgentEvent>> next) {
         // 每次调用一份独立状态：中间件是单例，放字段会让并发会话互相串
         UnverifiedClaimTrace trace = new UnverifiedClaimTrace();
         OutboundState state = new OutboundState();
@@ -224,6 +249,9 @@ public class SelfCorrectionMiddleware implements MiddlewareBase {
     private Flux<AgentEvent> inspect(Agent agent, RuntimeContext ctx, AgentEvent event,
                                      UnverifiedClaimTrace trace, OutboundState state) {
         try {
+            if (event.getSource() != null) {
+                return forwarded(event, trace);
+            }
             if (event instanceof ToolCallStartEvent call) {
                 // 工具调用事件与正文增量走同一条事件流，且必然先于最终答复到达——
                 // 因此不需要在 onActing 与 onAgent 之间共享状态，也就不依赖
@@ -252,6 +280,19 @@ public class SelfCorrectionMiddleware implements MiddlewareBase {
                 CODE_CHECK_FAIL, agentName(agent), e);
             return releaseThen(state, event);
         }
+    }
+
+    /**
+     * 子智能体转发进来的事件（带 source，取舍见类注释）：工具调用计入本轮依据，其余原样放过。
+     *
+     * <p>它的正文不是对用户说的话，判它会拦错对象；它查到的真实状态则随工具结果交回了主智能体，
+     * 主智能体据此转述有依据。</p>
+     */
+    private Flux<AgentEvent> forwarded(AgentEvent event, UnverifiedClaimTrace trace) {
+        if (event instanceof ToolCallStartEvent call) {
+            trace.recordTool(call.getToolCallName());
+        }
+        return Flux.just(event);
     }
 
     /** 流式正文：逐片过匹配器，命中即停止输出并补澄清。 */
@@ -300,10 +341,9 @@ public class SelfCorrectionMiddleware implements MiddlewareBase {
         return tail;
     }
 
-    /** 这一块是否可能就是 Jev 要判的最终答复：主 Agent 的、用户刚读到的正文，本轮还没拦过也没查过真实状态。 */
+    /** 这一块是否可能就是 Jev 要判的最终答复：用户刚读到的正文，本轮还没拦过也没查过真实状态。 */
     private boolean awaitsJevVerdict(TextBlockEndEvent end, UnverifiedClaimTrace trace, OutboundState state) {
-        return end.getSource() == null
-            && !state.tripped
+        return !state.tripped
             && !hasEvidence(trace)
             && state.lastTextIn(end.getReplyId())
             && activeJev(state) != null;
@@ -339,13 +379,13 @@ public class SelfCorrectionMiddleware implements MiddlewareBase {
     /**
      * 关键词没命中、本轮也没查过真实状态时，用 Jev 语义判定补拦。
      *
-     * <p>只判主 Agent 的最终结果（子 Agent 的结果不作为答复展示），每轮只判一次。
+     * <p>每轮只判一次。
      * 失败一律放行原结果（fail-open），与本类对自身故障的处理一致。</p>
      */
     private Flux<AgentEvent> jevGuard(Agent agent, RuntimeContext ctx, AgentResultEvent result, Msg msg, String text,
                                       UnverifiedClaimTrace trace, OutboundState state) {
         JevDecisionService jev = activeJev(state);
-        if (jev == null || result.getSource() != null) {
+        if (jev == null) {
             return releaseThen(state, result);
         }
         state.jevChecked = true;
@@ -549,7 +589,7 @@ public class SelfCorrectionMiddleware implements MiddlewareBase {
         private volatile String lastTextReplyId;
         /** 每轮只做一次 Jev 判定。 */
         private volatile boolean jevChecked;
-        /** 已开始、尚未结束的主 Agent 文本块；模型中途失败时它会一直悬空。 */
+        /** 已开始、尚未结束的文本块；模型中途失败时它会一直悬空。 */
         private TextBlockStartEvent openBlock;
         /** 等 Jev 判定而扣住的答复块结束，以及其后紧随的模型调用结束。 */
         private TextBlockEndEvent heldEnd;
@@ -572,13 +612,11 @@ public class SelfCorrectionMiddleware implements MiddlewareBase {
         }
 
         private synchronized void opened(TextBlockStartEvent start) {
-            if (start.getSource() == null) {
-                openBlock = start;
-            }
+            openBlock = start;
         }
 
         private synchronized void closed(TextBlockEndEvent end) {
-            if (end.getSource() == null && openBlock != null
+            if (openBlock != null
                 && Objects.equals(openBlock.getReplyId(), end.getReplyId())) {
                 openBlock = null;
             }
