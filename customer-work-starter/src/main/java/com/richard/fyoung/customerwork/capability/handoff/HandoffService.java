@@ -14,10 +14,14 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 人机切换兼容服务（AI→人工接管→人工→AI 回收）。
@@ -55,6 +59,14 @@ public class HandoffService {
     private HandoffCreatedEnricher enricher;
 
     /**
+     * 打开中的观察窗口：会话 -> 窗口集合（见 {@link HandoffWatch}）。
+     *
+     * <p>集合只在 {@code compute*} 回调里读写，由 {@link ConcurrentHashMap} 的按键互斥保证可见性，
+     * 故用普通 {@link HashSet}。窗口关闭即注销，空集合随之移除——条目数上限是正在进行的对话轮数。</p>
+     */
+    private final Map<String, Set<HandoffWatch>> watches = new ConcurrentHashMap<>();
+
+    /**
      * Spring 生产构造：完整 {@link TicketService} 是唯一权威工单服务。
      */
     @Autowired
@@ -83,8 +95,36 @@ public class HandoffService {
         this.legacyStore = legacyStore;
     }
 
-    /** AI 转出：在权威工单上推进到 WAITING_AGENT，并返回兼容三态读模型。 */
+    /**
+     * 打开一个观察窗口：窗口打开期间，该会话上每一次 {@link #create} 都会记入其中。
+     *
+     * <p>同一会话同时打开多个窗口（并发的两轮）时一并记入：宁可少缓存一条，不能漏记。
+     * 调用方负责关闭，否则窗口会一直留在登记处。</p>
+     */
+    public HandoffWatch watch(String sessionId) {
+        HandoffWatch watch = new HandoffWatch(sessionId, this::unwatch);
+        watches.compute(sessionId, (key, open) -> {
+            Set<HandoffWatch> set = open == null ? new HashSet<>() : open;
+            set.add(watch);
+            return set;
+        });
+        return watch;
+    }
+
+    private void unwatch(HandoffWatch watch) {
+        watches.computeIfPresent(watch.sessionId(), (key, open) -> {
+            open.remove(watch);
+            return open.isEmpty() ? null : open;
+        });
+    }
+
+    /**
+     * AI 转出：在权威工单上推进到 WAITING_AGENT，并返回兼容三态读模型。
+     *
+     * <p>先记入观察窗口再建单：建单失败、或会话已在人工链路上时，答复里同样是「已为您转接」。</p>
+     */
     public HandoffTicket create(String sessionId, String reason) {
+        markWatches(sessionId);
         if (isLegacyMode()) {
             String id = ID_PREFIX + UUID.randomUUID();
             HandoffTicket ticket = new HandoffTicket(id, sessionId, reason, System.currentTimeMillis());
@@ -103,6 +143,16 @@ public class HandoffService {
         }
         log.info("handoff created on canonical ticket: id={}, session={}", handedOff.getId(), sessionId);
         return projection;
+    }
+
+    private void markWatches(String sessionId) {
+        if (sessionId == null) {
+            return;
+        }
+        watches.computeIfPresent(sessionId, (key, open) -> {
+            open.forEach(HandoffWatch::markRequested);
+            return open;
+        });
     }
 
     /**

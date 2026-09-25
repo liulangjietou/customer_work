@@ -16,6 +16,8 @@ import com.richard.fyoung.customerwork.infra.counter.InMemoryWindowCounter;
 import com.richard.fyoung.customerwork.infra.lock.InMemorySessionLock;
 import com.richard.fyoung.customerwork.infra.lock.SessionLock;
 import com.richard.fyoung.customerwork.capability.csat.CsatService;
+import com.richard.fyoung.customerwork.capability.handoff.HandoffService;
+import com.richard.fyoung.customerwork.capability.handoff.HandoffWatch;
 import com.richard.fyoung.customerwork.capability.semanticcache.SemanticCacheService;
 import com.richard.fyoung.customerwork.safety.security.spotlight.AttachmentTextSpotlighter;
 import com.richard.fyoung.customerwork.safety.quota.InMemoryTenantQuotaStore;
@@ -175,6 +177,12 @@ public class CustomerServiceService {
     /** 对话阶段状态机；未装配时为 {@code null}，会话销毁不清理阶段。 */
     private DialogStageService dialogStageService;
 
+    /**
+     * 转人工服务，只用来观察「本轮有没有转人工」（见 {@link ReplyFinish}）；未装配时为 {@code null}，
+     * 此时本进程里没有任何来源建得出转人工单，观察窗口恒为未转人工。
+     */
+    private HandoffService handoffService;
+
     /** Spring 注入构造：MeterRegistry 经 ObjectProvider 可选注入（actuator 缺席时降级为无指标）。 */
     @Autowired
     public CustomerServiceService(CustomerServiceAgentFactory agentFactory,
@@ -204,6 +212,15 @@ public class CustomerServiceService {
         if (guard != null) {
             this.quotaGuard = guard;
         }
+    }
+
+    /**
+     * 可选注入转人工服务。用 setter 而非构造参数：主构造已有十余个可选依赖，
+     * 且精简构造的调用方（单测）不需要它——不注入时缓存判定只是少了这一道观察，行为与引入前一致。
+     */
+    @Autowired(required = false)
+    public void setHandoffService(HandoffService handoffService) {
+        this.handoffService = handoffService;
     }
 
     /** 保留既有显式构造调用；生产容器走上面的主体解析器 Bean。 */
@@ -390,8 +407,10 @@ public class CustomerServiceService {
         RuntimeContext ctx = agentFactory.contextFor(sessionId);
         bindCallMeta(ctx, agent, userText);
 
-        return withSessionLock(sessionKey, () ->
-            callAgent(agent, spotlightAttachments(userText), ctx)
+        // 观察窗口在拿到会话锁之后打开：覆盖本轮 Agent 运行的全程，而不会记进排在前面那一轮的转人工
+        return withSessionLock(sessionKey, () -> Mono.using(
+            () -> finish.watchHandoffs(watchHandoffs(sessionId)),
+            watch -> callAgent(agent, spotlightAttachments(userText), ctx)
                 .doOnNext(finish::record)
                 .map(Msg::getTextContent)
                 .doOnNext(reply -> log.info("[session {}] assistant reply: {}", sessionId, reply))
@@ -405,8 +424,13 @@ public class CustomerServiceService {
                     log.error("[session {}] chat failed, code={}", sessionId, "AGENT_CALL_ERROR", e);
                     incr(M_CHAT_FALLBACK);
                     return Mono.just(FALLBACK_REPLY);
-                })
-        );
+                }),
+            HandoffWatch::close));
+    }
+
+    /** 打开本轮的转人工观察窗口；没有转人工服务时给一个游离窗口。 */
+    private HandoffWatch watchHandoffs(String sessionId) {
+        return handoffService == null ? HandoffWatch.detached() : handoffService.watch(sessionId);
     }
 
     /**
@@ -537,39 +561,44 @@ public class CustomerServiceService {
         RuntimeContext ctx = agentFactory.contextFor(sessionId);
         bindCallMeta(ctx, agent, userText);
 
-        Flux<String> flux = withSessionLockFlux(sessionKey, Flux.defer(() -> {
-            // 兜底标记（每次订阅独立）：正常流式下模型逐块吐 TEXT_BLOCK_DELTA，最终的 AGENT_RESULT
-            // 只是同一段文本的汇总，不再下发；仅当一个增量都没出现时（非流式 provider）才用它补全文
-            AtomicBoolean deltaSeen = new AtomicBoolean(false);
-            // 出站敏感词过滤：每次订阅一个独立 guard（有状态，跨流复用会串内容）
-            SensitiveWordStreamGuard guard = newOutboundGuard();
-            return applyOutboundGuard(streamAgentEvents(agent, List.of(toUserMsg(spotlightAttachments(userText))), ctx)
-                // 旧的 stream(...) 在末尾自带 publishOn(boundedElastic)，streamEvents 没有：不切走
-                // 就会在模型 IO 线程上跑下游的敏感词过滤与 SSE 写出，拖慢模型侧的 chunk 读取
-                .publishOn(reactor.core.scheduler.Schedulers.boundedElastic())
-                .mapNotNull(event -> {
-                    // 正文增量：只认 TextBlock，思考过程（THINKING_BLOCK_DELTA）不下发给用户
-                    if (event instanceof TextBlockDeltaEvent delta) {
-                        String text = delta.getDelta();
-                        if (text == null || text.isEmpty()) {
-                            return null;
+        // 观察窗口在拿到会话锁之后打开、流终止（含取消与超时）时关闭，理由同 invokeAgent
+        Flux<String> flux = withSessionLockFlux(sessionKey, Flux.using(
+            () -> finish.watchHandoffs(watchHandoffs(sessionId)),
+            watch -> {
+                // 兜底标记（每次订阅独立）：正常流式下模型逐块吐 TEXT_BLOCK_DELTA，最终的 AGENT_RESULT
+                // 只是同一段文本的汇总，不再下发；仅当一个增量都没出现时（非流式 provider）才用它补全文
+                AtomicBoolean deltaSeen = new AtomicBoolean(false);
+                // 出站敏感词过滤：每次订阅一个独立 guard（有状态，跨流复用会串内容）
+                SensitiveWordStreamGuard guard = newOutboundGuard();
+                List<Msg> input = List.of(toUserMsg(spotlightAttachments(userText)));
+                return applyOutboundGuard(streamAgentEvents(agent, input, ctx)
+                    // 旧的 stream(...) 在末尾自带 publishOn(boundedElastic)，streamEvents 没有：不切走
+                    // 就会在模型 IO 线程上跑下游的敏感词过滤与 SSE 写出，拖慢模型侧的 chunk 读取
+                    .publishOn(reactor.core.scheduler.Schedulers.boundedElastic())
+                    .mapNotNull(event -> {
+                        // 正文增量：只认 TextBlock，思考过程（THINKING_BLOCK_DELTA）不下发给用户
+                        if (event instanceof TextBlockDeltaEvent delta) {
+                            String text = delta.getDelta();
+                            if (text == null || text.isEmpty()) {
+                                return null;
+                            }
+                            deltaSeen.set(true);
+                            return text;
                         }
-                        deltaSeen.set(true);
-                        return text;
-                    }
-                    if (event instanceof AgentResultEvent result) {
-                        // 最终结果标明本轮怎么收的尾：用尽、待审批、被打断的答复都不能进缓存
-                        finish.record(result.getResult());
-                        // 非流式模型兜底：一个增量都没出过时，用最终结果补一次全文，避免空回复
-                        if (deltaSeen.get()) {
-                            return null;
+                        if (event instanceof AgentResultEvent result) {
+                            // 最终结果标明本轮怎么收的尾：用尽、待审批、被打断的答复都不能进缓存
+                            finish.record(result.getResult());
+                            // 非流式模型兜底：一个增量都没出过时，用最终结果补一次全文，避免空回复
+                            if (deltaSeen.get()) {
+                                return null;
+                            }
+                            String text = result.getResult() == null ? null : result.getResult().getTextContent();
+                            return text == null || text.isEmpty() ? null : text;
                         }
-                        String text = result.getResult() == null ? null : result.getResult().getTextContent();
-                        return text == null || text.isEmpty() ? null : text;
-                    }
-                    return null;
-                }), guard);
-        }));
+                        return null;
+                    }), guard);
+            },
+            HandoffWatch::close));
 
         // SSE 空闲超时（框架 #1741 缓解）：相邻元素间隔超过阈值即超时收尾，避免连接泄漏。<=0 禁用。
         long idle = properties.getStream().getIdleTimeoutSeconds();
