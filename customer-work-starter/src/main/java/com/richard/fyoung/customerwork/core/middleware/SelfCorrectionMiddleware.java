@@ -115,6 +115,12 @@ import java.util.function.Supplier;
  * 判定出来时已无块可补——澄清退到悬空块或单独成块（{@link AnswerAppendix#closingBlock}），协议合法、流式用户看得到，
  * AG-UI 落库则只剩澄清。</p>
  *
+ * <h3>结构化结果不判定</h3>
+ * <p>{@code call(msg, Class, ctx)} 的最终结果是模型按 Schema 填给代码的数据（意图分类、多专家分诊），不是对用户的答复。
+ * 框架却会把结构化参数的 JSON 写进这条消息的文本，于是「用户反映客服称已退款但未到账」这类对用户原话的转述
+ * 会命中关键词——判下去就是一次假命中：记进指标与审计、开了 Jev 还多付一次判定。
+ * 这类调用要不要把人接进来由调用方看结构化结果决定（见 {@code ConversationTurn} 的「无人收尾的一轮」）。</p>
+ *
  * <h3>改写最终结果只换内容</h3>
  * <p>最终结果的消息身份、元数据与其余内容块原样保留（{@link AnswerAppendix#appendTo}）：框架标的结束原因要原样交给外层
  * 终止采集（轮次用尽时 H5 据此显示「答复尚未完成」），挂起的工具调用与消息 id 是 AG-UI 生成审批中断的依据。</p>
@@ -358,7 +364,8 @@ public class SelfCorrectionMiddleware implements MiddlewareBase {
                                               UnverifiedClaimTrace trace, OutboundState state) {
         Msg msg = result.getResult();
         String text = msg == null ? null : msg.getTextContent();
-        if (text == null || text.isBlank()) {
+        if (text == null || text.isBlank() || msg.hasStructuredData()) {
+            // 结构化结果是填给代码的数据、不是对用户的答复（见类注释「结构化结果不判定」）
             return releaseThen(state, result);
         }
         if (state.tripped) {

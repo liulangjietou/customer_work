@@ -1,6 +1,8 @@
 package com.richard.fyoung.customerwork.core.agent;
 
 import io.agentscope.core.agent.RuntimeContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.util.StringUtils;
 
 import java.util.LinkedHashSet;
@@ -29,19 +31,30 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  * 统一追加说明、转一次人工。Harness 父智能体刻意不结算子智能体的上报——子智能体的收尾已经作为工具结果
  * 交给父模型，接下来转不转人工由父模型判断，父智能体自己转不出来时有它自己的循环守卫。</p>
  *
+ * <h3>无人收尾的一轮</h3>
+ * <p>意图分类、多专家的分诊器这类调用，产出交给调用方的代码（挑专家、打标签），不交给用户，
+ * 也没有谁会替它们对用户说话——它们用 {@link #unattended} 开启一轮：上报的事只记一行日志、不入待办。
+ * 要不要把人接进来，看的是调用方拿到的结构化结果（紧急标记、{@code other} 兜底）；
+ * 由中间件在一次分类里替调用方转人工，建单时机与落点就都不受调用方控制了。</p>
+ *
  * @author owlzhangfq@gmail.com
  */
 public final class ConversationTurn {
+
+    private static final Logger log = LoggerFactory.getLogger(ConversationTurn.class);
 
     /** 多条转人工原因合并时的分隔符。 */
     private static final String REASON_SEPARATOR = "；";
 
     private final String sessionId;
+    /** 无人收尾：上报的事不入待办（见类注释「无人收尾的一轮」）。 */
+    private final boolean unattended;
     /** 内部调用上报的待办；多专家并行时会被多个线程同时写入。 */
     private final ConcurrentLinkedQueue<Escalation> escalations = new ConcurrentLinkedQueue<>();
 
-    private ConversationTurn(String sessionId) {
-        this.sessionId = sessionId;
+    private ConversationTurn(String sessionId, boolean unattended) {
+        this.sessionId = StringUtils.hasText(sessionId) ? sessionId : AgentGovernanceAssembler.DEFAULT_SESSION;
+        this.unattended = unattended;
     }
 
     /**
@@ -50,7 +63,18 @@ public final class ConversationTurn {
      * @param sessionId 用户会话；与 {@link AgentGovernanceAssembler#contextFor} 同口径，空值归为 {@code default}
      */
     public static ConversationTurn open(String sessionId) {
-        return new ConversationTurn(StringUtils.hasText(sessionId) ? sessionId : AgentGovernanceAssembler.DEFAULT_SESSION);
+        return new ConversationTurn(sessionId, false);
+    }
+
+    /**
+     * 开启无人收尾的一轮：替它干活的调用只产出给代码用的结果，上报的去向说明与转人工一律不处置。
+     *
+     * <p>调用会话须与 {@code sessionId} 不同（如 {@code intent:<会话>}），否则调用会被当成直接对用户说话。</p>
+     *
+     * @param sessionId 用户会话，仅用于日志定位
+     */
+    public static ConversationTurn unattended(String sessionId) {
+        return new ConversationTurn(sessionId, true);
     }
 
     /**
@@ -71,9 +95,15 @@ public final class ConversationTurn {
 
     /** 内部调用上报一件需要本轮组织者处理的事。 */
     public void escalate(Escalation escalation) {
-        if (escalation != null && (escalation.notice() != null || escalation.handoffReason() != null)) {
-            escalations.add(escalation);
+        if (escalation == null || escalation.notice() == null && escalation.handoffReason() == null) {
+            return;
         }
+        if (unattended) {
+            log.info("escalation not settled, turn is unattended, session={}, agent={}, handoffReason={}",
+                sessionId, escalation.agent(), escalation.handoffReason());
+            return;
+        }
+        escalations.add(escalation);
     }
 
     public boolean hasEscalations() {

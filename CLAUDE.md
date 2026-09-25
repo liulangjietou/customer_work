@@ -21,6 +21,19 @@
 
 ## 构建与测试（关键坑，全部实测踩过）
 
+- 2026-09-25 意图分类不再转人工（无迁移，客服端仍从 **V31**、Admin 从 **V115** 核对）：全模块
+  BUILD SUCCESS，starter 2356/6 skip、app-server 302、customer-channel 82、admin 2287/1 skip、gateway 1，
+  **合计 5028**（排除 `RedisSessionPersistenceTest`，rebase 到含 #251/#252 的 main 之后实测）。本批次自身加 starter **+5**
+  （`IntentClassificationGovernanceTest` 2 + `ConversationTurnTest` 2 + `MultiAgentTurnSettlementTest` 1）。两条经验：
+  ① **结构化输出的最终消息带着文本**：兜底路径（`generate_response`）把参数 JSON 写进最终 Msg 的 TextBlock
+  （反编译 `ReActAgent#createStructuredOutputTool`），`call()` 的返回值又取自中间件改写后的 `AgentResultEvent`——
+  于是「用户反映客服称已退款但未到账」这类对用户原话的转述会命中答复安全闸门的关键词。结构化结果没坏
+  （`withContent` 保留 `_structured_output` 元数据），坏的是在 `intent:<会话>` 上建出没人能接到用户的工单，
+  以及分诊器每次记一次假命中。闸门现对带结构化数据的最终结果不判定；
+  ② **「输出给代码、不给用户」的调用用 `ConversationTurn.unattended` 开轮**：上报只记 info 日志、不入待办，
+  要不要把人接进来由调用方看 `urgent` / `other` 兜底决定。`classifyIntent` 与 `/consult` 分诊器共用，
+  取代此前分诊器「开一个普通轮次但不结算」只靠注释表达的写法。
+
 - 2026-09-24 意图分类器专用轻量 Agent（无迁移，客服端仍从 **V31**、Admin 从 **V115** 核对）：全模块
   BUILD SUCCESS，starter 2351/6 skip、app-server 302、customer-channel 82、admin 2287/1 skip、gateway 1，
   **合计 5023**（排除 `RedisSessionPersistenceTest`，rebase 到含 #251 的 main 之后实测）。本批次自身加 starter **+3**
