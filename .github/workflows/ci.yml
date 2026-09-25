@@ -70,13 +70,15 @@ jobs:
           sudo apt-get update && sudo apt-get install -y redis-tools
           redis-cli -h 127.0.0.1 -p 6379 CONFIG SET requirepass 123456
 
-      # 与项目 compose 使用相同版本；轮播存取验收必须访问真实对象存储，不能在 CI 中跳过。
+      # 与项目 compose 使用相同的 MinIO 版本（RELEASE.2025-07-23T15-54-02Z）；轮播存取验收必须访问真实对象存储，
+      # 不能在 CI 中跳过。官方镜像已先后从 Docker Hub、quay.io 撤下（2026-09-24 起 quay.io 该 tag 返回 no such manifest），
+      # 改用 Bitnami 归档仓库的同版本构建：入口脚本自行以 /bitnami/minio/data 启动服务，不接受 `server /data` 参数。
       - name: Start MinIO for object storage acceptance
         run: |
           docker run --detach --name customer-work-ci-minio \
             --publish 127.0.0.1:9000:9000 \
             --env MINIO_ROOT_USER=minioadmin --env MINIO_ROOT_PASSWORD=minioadmin \
-            quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z server /data
+            docker.io/bitnamilegacy/minio:2025.7.23
           for attempt in $(seq 1 60); do
             if curl --fail --silent http://127.0.0.1:9000/minio/health/live > /dev/null; then
               exit 0
