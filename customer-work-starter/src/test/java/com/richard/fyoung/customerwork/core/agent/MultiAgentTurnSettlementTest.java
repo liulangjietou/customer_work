@@ -40,6 +40,7 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.contains;
@@ -148,6 +149,25 @@ class MultiAgentTurnSettlementTest {
         verify(handoffService, never()).create(argThat(s -> s.contains("#mas-")), anyString());
     }
 
+    /**
+     * 分诊器的输出交给编排器挑专家，不交给用户：它的 {@code summary} 转述了用户说的「已退款」，
+     * 框架又把结构化参数写进了最终消息的文本——这不是对用户的断言，不该记成未经核实的资金结论。
+     */
+    @Test
+    @DisplayName("分诊器摘要转述了「已退款」：不记成未经核实的资金结论、不转人工")
+    void routerSummaryQuotingRefundIsNotAClaim() {
+        props.getMultiAgent().setRoutingEnabled(true);
+        props.getMultiAgent().setFastRouteEnabled(false);
+
+        orchestrator(model(Behavior.ROUTER_QUOTES_REFUND)).consult(SESSION, "你们说已退款但我一直没到账")
+            .block(TIMEOUT);
+
+        verify(handoffService, never()).create(anyString(), anyString());
+        assertEquals(0.0, registry.counter("customerwork.selfcorrection.unverified.claim", "stage", "final").count(),
+            "转述用户原话不是对用户的断言");
+        verify(auditSink, never()).record(eq("self-correction-unverified-claim"), anyMap());
+    }
+
     // ---------- 装配 ----------
 
     private MultiAgentOrchestrator orchestrator(Model model) {
@@ -166,7 +186,7 @@ class MultiAgentTurnSettlementTest {
         return orchestrator;
     }
 
-    private enum Behavior { KNOWLEDGE_LOOPS, ALL_LOOP, ALL_ANSWER, AFTER_SALES_CLAIMS_REFUND }
+    private enum Behavior { KNOWLEDGE_LOOPS, ALL_LOOP, ALL_ANSWER, AFTER_SALES_CLAIMS_REFUND, ROUTER_QUOTES_REFUND }
 
     /**
      * 按系统提示词分派的离线脚本模型：归纳器记下提示词后给出固定改写；转不出来的专家每轮都调工具，
@@ -181,6 +201,9 @@ class MultiAgentTurnSettlementTest {
                 if (system.contains("归纳器")) {
                     reducerPrompts.add(messages.get(messages.size() - 1).getTextContent());
                     return text(REDUCED);
+                }
+                if (system.contains("分诊器")) {
+                    return routerDecision();
                 }
                 boolean loops = behavior == Behavior.ALL_LOOP
                     || behavior == Behavior.KNOWLEDGE_LOOPS && system.contains("政策咨询专家");
@@ -201,6 +224,16 @@ class MultiAgentTurnSettlementTest {
                 return "scripted-consult-model";
             }
         };
+    }
+
+    /** 分诊器的结构化调用：参数既给解析后的 input 也给原始 JSON，框架按原始 JSON 校验。 */
+    private static Flux<ChatResponse> routerDecision() {
+        String summary = "用户反映客服称已退款但款项一直未到账";
+        Map<String, Object> decision = Map.of("intent", "refund", "orderId", "", "urgent", true, "summary", summary);
+        String raw = "{\"response\":{\"intent\":\"refund\",\"orderId\":\"\",\"urgent\":true,\"summary\":\""
+            + summary + "\"}}";
+        return Flux.just(response(List.of(new ToolUseBlock("call-router", "generate_response",
+            Map.of("response", decision), raw, null)), "tool_calls"));
     }
 
     private static String systemPrompt(List<Msg> messages) {

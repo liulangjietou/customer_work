@@ -404,9 +404,10 @@ public class MultiAgentOrchestrator {
     private Mono<List<ReActAgent>> llmRoute(String sessionId, String userText, List<ReActAgent> all) {
         return Mono.using(
                 this::routerAgent,
-                // 分诊器挂一个不结算的轮次：它转不出来时本就回退为广播全部专家，不该打扰用户
+                // 分诊器的产出只用来挑专家、不交给用户，挂无人收尾的一轮：它转不出来时本就回退为广播全部专家，
+                // 不该打扰用户
                 router -> router.call("判断用户意图并结构化输出：" + userText, IntentResult.class,
-                    delegatedContext(ConversationTurn.open(sessionId), "router")),
+                    delegatedContext(ConversationTurn.unattended(sessionId), "router")),
                 router -> AgentResourceCloser.closeQuietly(router, "multi-agent-router"))
             .map(message -> message.getStructuredData(IntentResult.class))
             .map(intent -> {

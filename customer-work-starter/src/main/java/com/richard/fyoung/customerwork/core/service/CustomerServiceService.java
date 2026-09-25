@@ -3,6 +3,7 @@ package com.richard.fyoung.customerwork.core.service;
 import com.richard.fyoung.customerwork.capability.dialog.DialogStageService;
 import com.richard.fyoung.customerwork.core.agent.CustomerServiceAgentFactory;
 import com.richard.fyoung.customerwork.core.agent.AgentResourceCloser;
+import com.richard.fyoung.customerwork.core.agent.ConversationTurn;
 import com.richard.fyoung.customerwork.core.agent.HarnessAgentFactory;
 import com.richard.fyoung.customerwork.core.memory.MemorySubjectKey;
 import com.richard.fyoung.customerwork.core.memory.MemorySubjectResolver;
@@ -651,6 +652,11 @@ public class CustomerServiceService {
      * <p>用 ReActAgent 的结构化输出能力，让模型严格按 {@link IntentResult} 的 Schema 返回。
      * 用一次性独立 Agent 与独立 sessionId 做分类，绝不污染真实对话会话的记忆。</p>
      *
+     * <p><b>分类调用不对用户说话</b>：本轮挂的是 {@link ConversationTurn#unattended}，循环守卫与答复安全闸门
+     * 不在分类里转人工、不追加说明（轮次用尽照常记指标）。此前分类会话 {@code intent:<会话>} 与本轮会话相同，被当成直接对用户说话——
+     * 用户说「你们说已退款但没到账」，{@code summary} 转述了这句话，闸门就在 {@code intent:<会话>} 上
+     * 建出一张没人能接到用户的工单。</p>
+     *
      * <p>结构化输出走的是框架 fallback 工具路径（{@code generate_response} 被当作普通工具塞给模型，
      * 框架本身不会用 {@code tool_choice} 强制调用，见 agentscope-java #1852/#1699）：模型若这一轮
      * 没有主动选择调用该工具，{@link Msg#hasStructuredData()} 就会是 false，这不是异常情况，是该
@@ -675,6 +681,9 @@ public class CustomerServiceService {
                     () -> agentFactory.createIntentClassifierAgent(intentSessionId),
                     intentAgent -> {
                         RuntimeContext ctx = agentFactory.contextFor(intentSessionId);
+                        // 分类结果交给调用方的代码、不交给用户：挂无人收尾的一轮，治理中间件不在分类里转人工、
+                        // 不追加说明。要不要把人接进来看 urgent 与 other 兜底，由调用方决定
+                        ctx.put(ConversationTurn.class, ConversationTurn.unattended(sessionId));
                         String prompt = "请判断以下用户消息的意图，并调用工具输出结构化结果，不要直接用文本回答。"
                             + "必须调用一次生成结构化响应的工具，且 intent 字段只能是"
                             + " presale/consult/order/refund/complaint/other 之一。"
