@@ -12,6 +12,7 @@ import com.richard.fyoung.customerwork.infra.config.NacosPromptService;
 import com.richard.fyoung.customerwork.infra.config.properties.SkillProperties;
 import com.richard.fyoung.customerwork.tool.DefaultActiveGroupsToolkit;
 import com.richard.fyoung.customerwork.tool.HigressToolkitConfigurer;
+import com.richard.fyoung.customerwork.tool.ManagedToolkit;
 import com.richard.fyoung.customerwork.tool.McpToolkitConfigurer;
 import com.richard.fyoung.customerwork.tool.ToolRegistrar;
 import com.richard.fyoung.customerwork.tool.ToolkitConfigs;
@@ -79,6 +80,12 @@ public class CustomerServiceAgentFactory implements DisposableBean {
         8. 用户一次提出多件事（如"既要退货又要改地址"），或任务需要多个步骤才能办完时，
            先用 todo_write 列出待办清单，每完成一项就更新它的状态再做下一项；
            单步就能答完的问题不必列清单。
+        """;
+
+    /** 意图分类器的系统提示词：只分类、不作答、不办理业务（它手里也没有业务工具）。 */
+    private static final String INTENT_CLASSIFIER_PROMPT = """
+        你是电商客服系统的意图分类器，只负责判断用户消息的意图，不回答问题，也不办理任何业务。
+        每次都必须调用一次生成结构化响应的工具输出结果，不要直接用文本回答。
         """;
 
     private final Model model;
@@ -280,6 +287,43 @@ public class CustomerServiceAgentFactory implements DisposableBean {
             KnowledgeSourceTrackingTools.install(agent.getToolkit(), ragKnowledge);
         }
         return agent;
+    }
+
+    /**
+     * 为一次意图分类创建专用的轻量 Agent：只做分类，不办业务。
+     *
+     * <p><b>为什么不复用 {@link #createAgent}</b>：分类只需要框架在结构化调用时临时注入的
+     * {@code generate_response} 工具，而客服 Agent 带着全部业务工具。复用它有三个实际后果：</p>
+     * <ul>
+     *   <li>模型在分类时能直接调用 {@code cancelOrder} / {@code modifyAddress} / {@code submitReturn} /
+     *       {@code fileComplaint} 等写操作——Permission 的 ask 规则只覆盖退款与转人工且默认关闭，
+     *       {@code HumanApprovalMiddleware} 只打日志，这些写操作没有任何闸门；</li>
+     *   <li>每次分类都付一遍全部工具 schema（连同长期记忆、RAG、Skill、任务清单工具）的 token；</li>
+     *   <li>挂着 stateStore 按 {@code intent:<会话>} 读写状态，同一会话的上一次分类会被加载进下一次的上下文，
+     *       而这份状态没有任何清理入口。</li>
+     * </ul>
+     *
+     * <p>因此这里不挂业务工具、不挂 stateStore（框架退回实例内缓存，Agent 随用随弃即无残留）、
+     * 不挂长期记忆 / RAG / Skill / 任务清单 / 权限上下文。<b>治理装配照常走 {@link AgentGovernanceAssembler}</b>——
+     * 分类同样调模型、同样把用户原文送进上下文，token 计量与注入防护不能因为「只是分类」就缺席。</p>
+     *
+     * <p>工具集为空后，框架改按 {@code supportsNativeStructuredOutput()}（而非 {@code ...WithTools()}）选择
+     * 结构化输出路径。本项目没有对任何厂商模型开启原生结构化输出，两者都是 {@code false}，
+     * 分类仍走 {@code generate_response} 工具路径，选路与此前一致。</p>
+     *
+     * @param sessionId 分类专用会话标识（调用方负责加前缀与真实会话隔开）
+     */
+    public ReActAgent createIntentClassifierAgent(String sessionId) {
+        ReActAgent.Builder builder = ReActAgent.builder()
+            .name("IntentClassifier-" + sessionId)
+            .sysPrompt(INTENT_CLASSIFIER_PROMPT)
+            .model(model)
+            // 空工具集：结构化输出工具由框架在 call(msg, Class, ctx) 时自行注入
+            .toolkit(new ManagedToolkit(ToolkitConfigs.sequentialWith(properties.getToolExecution())))
+            .defaultSessionId(sessionId)
+            .maxIters(properties.getAgent().getMaxIters());
+        governanceAssembler.applyTo(builder);
+        return builder.build();
     }
 
     /**

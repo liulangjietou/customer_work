@@ -2,6 +2,7 @@ package com.richard.fyoung.customerwork.core.agent;
 
 import com.richard.fyoung.customerwork.capability.approval.PendingApprovalService;
 import com.richard.fyoung.customerwork.capability.handoff.HandoffService;
+import com.richard.fyoung.customerwork.core.dto.IntentResult;
 import com.richard.fyoung.customerwork.core.dto.KnowledgeCitation;
 import com.richard.fyoung.customerwork.core.memory.FactLog;
 import com.richard.fyoung.customerwork.core.memory.InMemoryLongTermMemoryStore;
@@ -304,5 +305,125 @@ class CustomerServiceAgentFactoryTest {
         assertTrue(names.contains("queryOrder"), "新会话下订单工具未到达模型层: " + names);
         assertTrue(names.contains("searchKnowledge"), "知识库工具未到达模型层: " + names);
         assertTrue(names.contains("transferToHuman"), "转人工工具未到达模型层: " + names);
+    }
+
+    // ==================== 意图分类器专用 Agent ====================
+
+    /** 框架结构化输出注入的工具名（fallback 路径，见 agentscope-java #1852）。 */
+    private static final String STRUCTURED_OUTPUT_TOOL = "generate_response";
+
+    /** 离线模型：第一轮调用结构化输出工具给出 refund，之后回纯文本收尾；每次调用都记录入参。 */
+    private void scriptStructuredIntentModel(List<List<ToolSchema>> toolsSeen, List<List<Msg>> messagesSeen) {
+        AtomicInteger step = new AtomicInteger();
+        Mockito.when(model.getModelName()).thenReturn("intent-offline");
+        Mockito.when(model.stream(ArgumentMatchers.anyList(), ArgumentMatchers.anyList(), ArgumentMatchers.any()))
+            .thenAnswer(inv -> {
+                messagesSeen.add(List.copyOf(inv.getArgument(0)));
+                toolsSeen.add(List.copyOf(inv.getArgument(1)));
+                boolean first = step.incrementAndGet() % 2 == 1;
+                ContentBlock block = first
+                    ? ToolUseBlock.builder().id("gr-" + step.get()).name(STRUCTURED_OUTPUT_TOOL)
+                        // 框架把目标 Schema 包在 response 字段下（ReActAgent#createStructuredOutputTool）
+                        .input(Map.of("response",
+                            Map.of("intent", "refund", "orderId", "", "urgent", false, "summary", "退款")))
+                        .content("{\"response\":{\"intent\":\"refund\",\"orderId\":\"\","
+                            + "\"urgent\":false,\"summary\":\"退款\"}}")
+                        .build()
+                    : TextBlock.builder().text("done").build();
+                return reactor.core.publisher.Flux.just(ChatResponse.builder()
+                    .id("intent-" + step.get()).content(List.of(block))
+                    .usage(new ChatUsage(1, 1, 0.0))
+                    .finishReason(first ? "tool_calls" : "stop").build());
+            });
+    }
+
+    private static Set<String> toolNames(List<ToolSchema> schemas) {
+        return schemas.stream().map(ToolSchema::getName).collect(Collectors.toSet());
+    }
+
+    /**
+     * 分类器只允许看到结构化输出工具。
+     *
+     * <p>此前分类器复用 {@code createAgent}，模型每次分类都拿到全部业务工具：{@code cancelOrder} /
+     * {@code modifyAddress} / {@code submitReturn} / {@code fileComplaint} 这类写操作没有任何闸门
+     * （Permission 的 ask 规则只覆盖 submitRefund 与 transferToHuman，且默认关闭），
+     * 一条发往 /intent 的消息就可能真的办了业务；同时每次分类都要付全部工具 schema 的 token。
+     * 这里把长期记忆、RAG、任务清单、Meta-Tool 全部打开，任何一路漏进来都会红。</p>
+     */
+    @Test
+    void intentClassifier_shouldExposeOnlyStructuredOutputToolToModel() {
+        CustomerWorkProperties props = new CustomerWorkProperties();
+        props.getAgent().setMetaToolEnabled(true);
+        CustomerServiceAgentFactory f = factory(props);
+        List<List<ToolSchema>> toolsSeen = new java.util.concurrent.CopyOnWriteArrayList<>();
+        scriptStructuredIntentModel(toolsSeen, new java.util.concurrent.CopyOnWriteArrayList<>());
+
+        ReActAgent classifier = f.createIntentClassifierAgent("intent:tenantA:conv-1");
+        Msg reply = classifier.call("我要退款，顺便把订单取消", IntentResult.class,
+            f.contextFor("intent:tenantA:conv-1")).block(Duration.ofSeconds(15));
+
+        assertTrue(!toolsSeen.isEmpty(), "模型一次都没被调用");
+        assertEquals(Set.of(STRUCTURED_OUTPUT_TOOL), toolNames(toolsSeen.get(0)),
+            "分类器暴露给模型的工具只能是结构化输出工具");
+        assertTrue(reply != null && reply.hasStructuredData(), "空工具集下结构化输出仍须可用");
+        assertEquals("refund", reply.getStructuredData(IntentResult.class).intent());
+    }
+
+    /**
+     * 分类器不得落会话状态：同一会话的两次分类互不可见。
+     *
+     * <p>此前分类器挂着 stateStore，按 {@code intent:<会话>} 读写状态——第二次分类会把第一次的
+     * 用户原文与结构化结果一并加载进上下文（上一次的判定会影响这一次），且这份状态没有任何清理入口。</p>
+     */
+    @Test
+    void intentClassifier_shouldNotCarryStateAcrossClassifications() {
+        CustomerServiceAgentFactory f = factory(new CustomerWorkProperties());
+        List<List<Msg>> messagesSeen = new java.util.concurrent.CopyOnWriteArrayList<>();
+        scriptStructuredIntentModel(new java.util.concurrent.CopyOnWriteArrayList<>(), messagesSeen);
+        String sessionId = "intent:tenantA:conv-state";
+
+        ReActAgent first = f.createIntentClassifierAgent(sessionId);
+        first.call("第一次分类的原文MARK-1", IntentResult.class, f.contextFor(sessionId))
+            .block(Duration.ofSeconds(15));
+        int before = messagesSeen.size();
+
+        f.createIntentClassifierAgent(sessionId)
+            .call("第二次分类", IntentResult.class, f.contextFor(sessionId))
+            .block(Duration.ofSeconds(15));
+
+        String secondRoundContext = messagesSeen.get(before).stream()
+            .map(Msg::getTextContent).collect(Collectors.joining("\n"));
+        assertTrue(!secondRoundContext.contains("MARK-1"),
+            "第二次分类的上下文里出现了第一次分类的原文：" + secondRoundContext);
+        assertEquals(null, first.getStateStore(), "分类器不应挂状态存储");
+    }
+
+    /** 分类器同样要经过治理装配：token 计量、敏感词、注入防护等不能因为「只是分类」就裸奔。 */
+    @Test
+    @SuppressWarnings("unchecked")
+    void intentClassifier_shouldApplyGovernanceMiddlewares() {
+        AtomicInteger reasoningCalls = new AtomicInteger();
+        MiddlewareBase probe = new MiddlewareBase() {
+            @Override
+            public reactor.core.publisher.Flux<io.agentscope.core.event.AgentEvent> onReasoning(
+                io.agentscope.core.agent.Agent agent, io.agentscope.core.agent.RuntimeContext ctx,
+                io.agentscope.core.middleware.ReasoningInput input,
+                java.util.function.Function<io.agentscope.core.middleware.ReasoningInput,
+                    reactor.core.publisher.Flux<io.agentscope.core.event.AgentEvent>> next) {
+                reasoningCalls.incrementAndGet();
+                return next.apply(input);
+            }
+        };
+        var middlewares = (ObjectProvider<MiddlewareBase>) mock(ObjectProvider.class);
+        Mockito.when(middlewares.orderedStream()).thenAnswer(inv -> Stream.of(probe));
+        CustomerWorkProperties props = new CustomerWorkProperties();
+        CustomerServiceAgentFactory f = factory(props, new KnowledgeProvider(props), middlewares);
+        scriptStructuredIntentModel(new java.util.concurrent.CopyOnWriteArrayList<>(),
+            new java.util.concurrent.CopyOnWriteArrayList<>());
+
+        f.createIntentClassifierAgent("intent:gov").call("我要退款", IntentResult.class,
+            f.contextFor("intent:gov")).block(Duration.ofSeconds(15));
+
+        assertTrue(reasoningCalls.get() > 0, "分类器没有挂上治理装配器提供的中间件");
     }
 }

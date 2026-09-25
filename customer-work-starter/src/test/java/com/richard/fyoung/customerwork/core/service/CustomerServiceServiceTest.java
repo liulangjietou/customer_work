@@ -58,6 +58,7 @@ class CustomerServiceServiceTest {
         agent = mock(ReActAgent.class);
         sessionStateManager = mock(SessionStateManager.class);
         when(factory.createAgent(anyString())).thenReturn(agent);
+        when(factory.createIntentClassifierAgent(anyString())).thenReturn(agent);
         when(factory.contextFor(anyString())).thenAnswer(inv ->
             RuntimeContext.builder().userId("tenant").sessionId(inv.getArgument(0)).build());
         service = new CustomerServiceService(factory, sessionStateManager);
@@ -314,7 +315,8 @@ class CustomerServiceServiceTest {
     }
 
     /**
-     * 意图识别用独立的 "intent:" 前缀 Agent，不复用会话 Agent，避免分类指令污染真实对话记忆。
+     * 意图识别用独立的 "intent:" 前缀专用分类 Agent：既不复用会话 Agent（避免分类指令污染真实对话记忆），
+     * 也不走客服 Agent 的构建路径（那条路径带全部业务工具与状态存储）。
      */
     @Test
     void classifyIntent_shouldUseSeparateAgent() {
@@ -327,9 +329,9 @@ class CustomerServiceServiceTest {
 
         service.classifyIntent("u7", "我要退款").block();
 
-        // 用独立 intent: 前缀 Agent，不碰会话 Agent
-        verify(factory).createAgent("intent:u7");
-        verify(factory, org.mockito.Mockito.never()).createAgent("u7");
+        // 用独立 intent: 前缀的专用分类 Agent，不碰会话 Agent，也不走客服 Agent 的构建路径
+        verify(factory).createIntentClassifierAgent("intent:u7");
+        verify(factory, org.mockito.Mockito.never()).createAgent(anyString());
     }
 
     /** chat 失败走兜底时应递增 customerwork.chat.fallback 计数。 */
