@@ -21,6 +21,26 @@
 
 ## 构建与测试（关键坑，全部实测踩过）
 
+- 2026-09-24 语义缓存按结束原因准入（无迁移，客服端仍从 **V31**、Admin 从 **V115** 核对）：全模块
+  BUILD SUCCESS，starter 2328/6 skip、app-server 302、customer-channel 82、admin 2287/1 skip、gateway 1，
+  **合计 5000**（排除 `RedisSessionPersistenceTest`，rebase 到含 #248/#253 的 main 之后实测）。本批次自身加 starter **+31**
+  （`CustomerServiceCacheFinishReasonTest` 28 + `CustomerServiceCacheRealAgentTest` 3）。四条经验：
+  ① **框架正常收尾时不写结束原因**（2.0.3 反编译：`ReActAgent` 只给用尽、审批、中断、停止这类收尾标原因），
+  `Msg#getGenerateReason()` 对缺失的键返回 `MODEL_STOP`。所以「只缓存正常收尾」只能按 getter 判定，
+  改成只认显式写入的原因会让缓存一条都写不进去且不报错（`CustomerServiceCacheRealAgentTest` 对照组钉住）；
+  反过来，**任何重建最终结果的中间件都会把用尽、审批抹成「正常结束」**，改写一律走 `Msg#withContent` / `AnswerAppendix`；
+  ② **缓存准入判定收在 `ReplyFinish` 一处**，两条路径都经 `cacheReply`：结束原因取本轮最后一个最终结果
+  （与框架 `call()` 的 `takeLast(1)` 一致）、走兜底即降级且不再复位、一直没收到最终结果的不缓存；
+  ③ **结束原因管不到「正常收尾但宣告了本轮副作用」的答复**：`HandoffService.create` 的 5 个调用方里，
+  自我纠错、Jev 情绪升级、Jev 退款风险、模型调用的转人工工具 4 处都以 `MODEL_STOP` 收尾，
+  「已为您转接人工」照样会进缓存、命中时不会真的转接。当前靠意图白名单（只收 `consult`）挡住大部分，
+  彻底解决需要一个「本轮是否建过转人工」的轮次级信号，已另立后续任务；
+  ④ **CI 的 MinIO 镜像已第二次失效**（先是 Docker Hub 拒绝拉取，2026-09-24 起 quay.io 的
+  `RELEASE.2025-07-23T15-54-02Z` 也返回 no such manifest），`build-and-test` 在启动 MinIO 那一步就以 125 退出、
+  一条测试都没跑——**CI 红了先看是哪一步红的，别当成代码回归**。PR #253 已改用 `docker.io/bitnamilegacy/minio:2025.7.23`
+  （同版本二进制，入口脚本自启、不接受 `server /data`）。两份 compose 仍指向拉不到的官方镜像、刻意没改：
+  Bitnami 镜像以 uid 1001 运行，而既有 `minio-data` 卷里是 root 写入的文件，直接换镜像可能起不来，需单独评估。
+
 - 2026-09-24 答复安全闸门流式修复（无迁移，客服端仍从 **V31**、Admin 从 **V115** 核对）：全模块
   BUILD SUCCESS，starter 2285/6 skip、app-server 302、customer-channel 82、admin 2284/1 skip、gateway 1，
   **合计 4954**（排除 `RedisSessionPersistenceTest`）。本批次自身加 starter **+12**

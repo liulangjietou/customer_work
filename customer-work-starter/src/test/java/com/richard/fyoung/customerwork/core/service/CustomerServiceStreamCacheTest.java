@@ -5,7 +5,11 @@ import com.richard.fyoung.customerwork.core.agent.CustomerServiceAgentFactory;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.RuntimeContext;
+import io.agentscope.core.event.AgentResultEvent;
 import io.agentscope.core.event.TextBlockDeltaEvent;
+import io.agentscope.core.message.Msg;
+import io.agentscope.core.message.MsgRole;
+import io.agentscope.core.message.TextBlock;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
@@ -91,8 +95,9 @@ class CustomerServiceStreamCacheTest {
     void cacheMiss_shouldInvokeAgentAndWriteCache() {
         when(cache.lookup(eq(CACHE_GENERATION), eq(SESSION_ID), anyString()))
             .thenReturn(Optional.empty());
+        // 真实事件流以最终结果收尾：它标明本轮怎么结束，缓存只收正常收尾的答复
         when(agent.streamEvents(anyList(), any(RuntimeContext.class)))
-            .thenReturn(Flux.just(delta("运费"), delta("满 99 包邮。")));
+            .thenReturn(Flux.just(delta("运费"), delta("满 99 包邮。"), finalResult("运费满 99 包邮。")));
 
         String joined = String.join("", service.chatStream(SESSION_ID, "运费怎么算")
             .collectList().block());
@@ -134,6 +139,12 @@ class CustomerServiceStreamCacheTest {
 
     private TextBlockDeltaEvent delta(String text) {
         return new TextBlockDeltaEvent("r1", "b1", text);
+    }
+
+    /** 框架正常收尾的最终结果：不带结束原因（读出来是 MODEL_STOP）。 */
+    private AgentResultEvent finalResult(String text) {
+        return new AgentResultEvent(Msg.builder().role(MsgRole.ASSISTANT).name("assistant")
+            .content(TextBlock.builder().text(text).build()).build());
     }
 
     @SuppressWarnings("unchecked")

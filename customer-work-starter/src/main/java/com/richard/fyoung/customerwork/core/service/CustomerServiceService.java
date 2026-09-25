@@ -351,7 +351,7 @@ public class CustomerServiceService {
         touchSession(sessionKey);
         Mono<String> result;
         if (semanticCache == null) {
-            result = invokeAgent(sessionKey, userText);
+            result = invokeAgent(sessionKey, userText, new ReplyFinish());
         } else {
             SemanticCacheService.CacheGeneration cacheGeneration = semanticCache.captureGeneration();
             // 查缓存要调 Embedding（阻塞 HTTP），必须挪到弹性线程池，不能占用调用线程
@@ -364,16 +364,27 @@ public class CustomerServiceService {
                         // 口径与流式命中路径 streamCachedAnswer 完全一致，两条路径不得再分叉。
                         return Mono.just(applyOutboundGuard(answer));
                     })
-                    .orElseGet(() -> invokeAgent(sessionKey, userText)
-                        .doOnNext(reply -> cacheReply(cacheGeneration, sessionId, userText, reply))));
+                    .orElseGet(() -> invokeAgentAndCache(cacheGeneration, sessionKey, userText)));
         }
         return quota.shouldDegrade()
             ? result.contextWrite(ModelRoutingContext::preferFallback)
             : result;
     }
 
-    /** 真正走一遍 Agent（装配 + 知识检索 + 模型调用）——缓存未命中时才发生。 */
-    private Mono<String> invokeAgent(AgentSessionKey sessionKey, String userText) {
+    /** 走 Agent 并在答复正常收尾时异步写缓存，与流式的 {@link #streamFromAgentAndCache} 同一口径。 */
+    private Mono<String> invokeAgentAndCache(SemanticCacheService.CacheGeneration cacheGeneration,
+                                             AgentSessionKey sessionKey, String userText) {
+        ReplyFinish finish = new ReplyFinish();
+        return invokeAgent(sessionKey, userText, finish)
+            .doOnNext(reply -> cacheReply(cacheGeneration, sessionKey.sessionId(), userText, reply, finish));
+    }
+
+    /**
+     * 真正走一遍 Agent（装配 + 知识检索 + 模型调用）——缓存未命中时才发生。
+     *
+     * @param finish 出参：记下最终结果的结束原因，走了兜底时标记降级；调用方据此决定写不写缓存
+     */
+    private Mono<String> invokeAgent(AgentSessionKey sessionKey, String userText, ReplyFinish finish) {
         String sessionId = sessionKey.sessionId();
         Agent agent = resolveAgent(sessionKey);
         RuntimeContext ctx = agentFactory.contextFor(sessionId);
@@ -381,9 +392,11 @@ public class CustomerServiceService {
 
         return withSessionLock(sessionKey, () ->
             callAgent(agent, spotlightAttachments(userText), ctx)
+                .doOnNext(finish::record)
                 .map(Msg::getTextContent)
                 .doOnNext(reply -> log.info("[session {}] assistant reply: {}", sessionId, reply))
                 .onErrorResume(e -> {
+                    finish.markDegraded();
                     if (isFallbackModelUnavailable(e)) {
                         log.error("[session {}] quota fallback unavailable, code={}",
                             sessionId, "QUOTA-DEGRADE-FALLBACK-UNAVAILABLE", e);
@@ -399,12 +412,15 @@ public class CustomerServiceService {
     /**
      * 异步写缓存。
      *
-     * <p>写入同样要调 Embedding，放在响应链里会把这次的延迟凭空加上去——而用户此刻已经拿到答案了。
-     * 兜底回复不写缓存：把"服务开小差"缓存起来，后面每个问到同类问题的人都会收到它。</p>
+     * <p>写入同样要调 Embedding，放在响应链里会把这次的延迟凭空加上去——而用户此刻已经拿到答案了。</p>
+     *
+     * <p>只写正常收尾的答复，判定见 {@link ReplyFinish}，两条路径都经这一处。兜底回复同样由它挡下：
+     * 把"服务开小差"缓存起来，后面每个问到同类问题的人都会收到它。</p>
      */
     private void cacheReply(SemanticCacheService.CacheGeneration cacheGeneration,
-                            String sessionId, String userText, String reply) {
-        if (FALLBACK_REPLY.equals(reply) || QUOTA_EXCEEDED_REPLY.equals(reply)) {
+                            String sessionId, String userText, String reply, ReplyFinish finish) {
+        if (!finish.replayable()) {
+            log.info("[session {}] reply not cached, {}", sessionId, finish);
             return;
         }
         Mono.fromRunnable(() -> semanticCache.put(cacheGeneration, sessionId, userText, reply))
@@ -434,7 +450,7 @@ public class CustomerServiceService {
         touchSession(sessionKey);
         Flux<String> result;
         if (semanticCache == null) {
-            result = streamFromAgent(sessionKey, userText, new AtomicBoolean(false));
+            result = streamFromAgent(sessionKey, userText, new ReplyFinish());
         } else {
             SemanticCacheService.CacheGeneration cacheGeneration = semanticCache.captureGeneration();
             // 查缓存要调 Embedding（阻塞 HTTP），必须挪到弹性线程池，理由同非流式路径
@@ -495,28 +511,27 @@ public class CustomerServiceService {
      *
      * <p>用 {@code doOnComplete} 而不是 {@code doFinally}：后者在错误路径上也会跑，
      * 而中途失败的流里累积的是"半截回答 + 兜底文案"，把它缓存下来，之后每个问到同类问题的人
-     * 都会收到这段残缺的回复。降级标志由 {@link #streamFromAgent} 在兜底时置位。</p>
+     * 都会收到这段残缺的回复。兜底被 {@code onErrorResume} 接住之后流照样正常完成，
+     * 所以写不写仍由 {@link ReplyFinish} 判定：{@link #streamFromAgent} 在收到最终结果时记下结束原因、
+     * 走兜底时标记降级。</p>
      */
     private Flux<String> streamFromAgentAndCache(SemanticCacheService.CacheGeneration cacheGeneration,
                                                  AgentSessionKey sessionKey, String userText) {
         String sessionId = sessionKey.sessionId();
         StringBuilder accumulated = new StringBuilder();
-        AtomicBoolean degraded = new AtomicBoolean(false);
-        return streamFromAgent(sessionKey, userText, degraded)
+        ReplyFinish finish = new ReplyFinish();
+        return streamFromAgent(sessionKey, userText, finish)
             .doOnNext(accumulated::append)
-            .doOnComplete(() -> {
-                if (!degraded.get()) {
-                    cacheReply(cacheGeneration, sessionId, userText, accumulated.toString());
-                }
-            });
+            .doOnComplete(() -> cacheReply(cacheGeneration, sessionId, userText, accumulated.toString(), finish));
     }
 
     /**
      * 真正走一遍 Agent 的流式链路——缓存未命中时才发生。
      *
-     * @param degraded 出参：走了兜底（超时 / 调用失败）时置位，调用方据此决定不写缓存
+     * @param finish 出参：记下最终结果的结束原因，走了兜底（超时 / 调用失败）时标记降级；
+     *               调用方据此决定写不写缓存
      */
-    private Flux<String> streamFromAgent(AgentSessionKey sessionKey, String userText, AtomicBoolean degraded) {
+    private Flux<String> streamFromAgent(AgentSessionKey sessionKey, String userText, ReplyFinish finish) {
         String sessionId = sessionKey.sessionId();
         Agent agent = resolveAgent(sessionKey);
         RuntimeContext ctx = agentFactory.contextFor(sessionId);
@@ -542,8 +557,13 @@ public class CustomerServiceService {
                         deltaSeen.set(true);
                         return text;
                     }
-                    // 非流式模型兜底：一个增量都没出过时，用最终结果补一次全文，避免空回复
-                    if (event instanceof AgentResultEvent result && !deltaSeen.get()) {
+                    if (event instanceof AgentResultEvent result) {
+                        // 最终结果标明本轮怎么收的尾：用尽、待审批、被打断的答复都不能进缓存
+                        finish.record(result.getResult());
+                        // 非流式模型兜底：一个增量都没出过时，用最终结果补一次全文，避免空回复
+                        if (deltaSeen.get()) {
+                            return null;
+                        }
                         String text = result.getResult() == null ? null : result.getResult().getTextContent();
                         return text == null || text.isEmpty() ? null : text;
                     }
@@ -558,7 +578,7 @@ public class CustomerServiceService {
         }
 
         return flux.onErrorResume(e -> {
-            degraded.set(true);
+            finish.markDegraded();
             if (e instanceof TimeoutException) {
                 log.error("[session {}] stream idle timeout after {}s, closing, code={}",
                     sessionId, idle, "STREAM_IDLE_TIMEOUT");
