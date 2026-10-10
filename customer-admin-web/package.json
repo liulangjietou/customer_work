@@ -17,7 +17,7 @@
     "axios": "^1.18.1",
     "crypto-js": "^4.2.0",
     "echarts": "^6.1.0",
-    "element-plus": "^2.14.2",
+    "element-plus": "^2.14.4",
     "highlight.js": "^11.11.1",
     "markdown-it": "^14.3.0",
     "pinia": "^2.3.1",
