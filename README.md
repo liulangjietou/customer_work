@@ -28,6 +28,13 @@
 
 [![作品演示](https://github.com/user-attachments/assets/75a324d7-4e2e-4383-b049-c3cfc7802ee5)](https://www.bilibili.com/video/BV1nhes6ZEZa/)
 
+## 开源贡献
+
+[![RichardFyoung（liulangjietou）· AgentScope Java PR 贡献者 · PR #2546 已合并](docs/assets/agentscope-contributor.png)](https://github.com/agentscope-ai/agentscope-java/pull/2546)
+
+我也是 **AgentScope Java 的 PR 贡献者**：[PR #2546](https://github.com/agentscope-ai/agentscope-java/pull/2546)
+已于 2026 年 9 月 21 日合并到 `main`，修复 HITL 人工拒绝工具调用时缺失工具结果事件的问题，并支持自定义拒绝原因。
+
 ## 导航
 
 - [项目定位](#一项目定位)
