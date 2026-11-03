@@ -34,7 +34,8 @@ public enum ChatMessagePhase {
             };
         }
         return switch (reason) {
-            case MODEL_STOP, STRUCTURED_OUTPUT -> FINAL;
+            // TOOL_RETURN_DIRECT：returnDirect 工具的输出被框架直接组装为最终助手消息并跳出推理循环
+            case MODEL_STOP, STRUCTURED_OUTPUT, TOOL_RETURN_DIRECT -> FINAL;
             case TOOL_CALLS -> PROCESS;
             case TOOL_SUSPENDED, PERMISSION_ASKING -> WAITING;
             case ALL_TOOLS_DENIED -> FAILED;
