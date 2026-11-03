@@ -16,7 +16,13 @@
 
 ## 分支策略
 
-- `main` = AgentScope 2.0.3（2026-07 起 2.0.0 GA，批次二升 2.0.2，2026-09-10 升 2.0.3）。**有分支保护，禁止直接 push，必须走 PR**。
+- `main` = AgentScope 2.0.4（2026-07 起 2.0.0 GA，批次二升 2.0.2，2026-09-10 升 2.0.3，2026-11-03 升 2.0.4）。
+  **官方 main 分支 pom 里的版本是 `2.1.0-SNAPSHOT`，不是发布版**——"对齐官方最新"以 Maven Central
+  `agentscope-bom` 的 release 为准，预发布（`-BETA`/`-RC`）不用于生产。2.0.4 升级唯一的编译破坏是
+  `GenerateReason` 新增 `TOOL_RETURN_DIRECT`（`returnDirect` 工具结果直接作为最终答复），穷举 switch 会炸；
+  本项目没有工具启用 returnDirect，`ReplyFinish` 缓存白名单不含它（工具直出内容不进语义缓存）。
+  全量 5031（starter 2358/6 skip、app-server 302、channel 82、admin 2288/1 skip、gateway 1）。
+  **有分支保护，禁止直接 push，必须走 PR**。
 - `legacy-main-1.0.12` 标签 = 升级前 1.0.12 最后状态；`rc2.0` 分支 = RC4 首轮迁移存档；`ga2.0` 分支 = 已并入 main 的历史开发分支（保留不删）。
 
 ## 构建与测试（关键坑，全部实测踩过）
