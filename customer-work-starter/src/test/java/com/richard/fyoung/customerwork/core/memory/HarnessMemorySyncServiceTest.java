@@ -28,7 +28,7 @@ class HarnessMemorySyncServiceTest {
         HarnessMemoryStore store = new InMemoryHarnessMemoryStore();
         store.save(scopeOf(workspace), "# MEMORY\n- 用户偏好顺丰快递\n");
 
-        new HarnessMemorySyncService(store).hydrate(workspace);
+        new HarnessMemorySyncService(store).hydrate(workspace, workspace.resolve(MEMORY_FILE_NAME));
 
         assertEquals("# MEMORY\n- 用户偏好顺丰快递\n",
             Files.readString(workspace.resolve(MEMORY_FILE_NAME), StandardCharsets.UTF_8));
@@ -39,7 +39,7 @@ class HarnessMemorySyncServiceTest {
         Files.writeString(workspace.resolve(MEMORY_FILE_NAME), "存量磁盘记忆", StandardCharsets.UTF_8);
         HarnessMemoryStore store = new InMemoryHarnessMemoryStore();
 
-        new HarnessMemorySyncService(store).hydrate(workspace);
+        new HarnessMemorySyncService(store).hydrate(workspace, workspace.resolve(MEMORY_FILE_NAME));
 
         assertEquals("存量磁盘记忆", store.load(scopeOf(workspace)).orElse(null),
             "权威侧为空且 workspace 有存量文件时应反向入库（存量迁移）");
@@ -49,7 +49,7 @@ class HarnessMemorySyncServiceTest {
     void hydrate_shouldDoNothing_whenBothSidesEmpty(@TempDir Path workspace) {
         HarnessMemoryStore store = new InMemoryHarnessMemoryStore();
 
-        new HarnessMemorySyncService(store).hydrate(workspace);
+        new HarnessMemorySyncService(store).hydrate(workspace, workspace.resolve(MEMORY_FILE_NAME));
 
         assertTrue(store.load(scopeOf(workspace)).isEmpty());
         assertFalse(Files.exists(workspace.resolve(MEMORY_FILE_NAME)), "不该凭空造出空记忆文件");
@@ -61,7 +61,7 @@ class HarnessMemorySyncServiceTest {
         store.save(scopeOf(workspace), "旧记忆");
         Files.writeString(workspace.resolve(MEMORY_FILE_NAME), "新记忆", StandardCharsets.UTF_8);
 
-        new HarnessMemorySyncService(store).persistIfChanged(workspace);
+        new HarnessMemorySyncService(store).persistIfChanged(workspace, workspace.resolve(MEMORY_FILE_NAME));
 
         assertEquals("新记忆", store.load(scopeOf(workspace)).orElse(null));
     }
@@ -73,7 +73,7 @@ class HarnessMemorySyncServiceTest {
         Files.writeString(workspace.resolve(MEMORY_FILE_NAME), "同样的记忆", StandardCharsets.UTF_8);
         int savesBefore = store.saveCount;
 
-        new HarnessMemorySyncService(store).persistIfChanged(workspace);
+        new HarnessMemorySyncService(store).persistIfChanged(workspace, workspace.resolve(MEMORY_FILE_NAME));
 
         assertEquals(savesBefore, store.saveCount, "内容未变化时不该产生写入");
     }
@@ -82,9 +82,21 @@ class HarnessMemorySyncServiceTest {
     void persistIfChanged_shouldSkip_whenWorkspaceFileMissing(@TempDir Path workspace) {
         RecordingHarnessMemoryStore store = new RecordingHarnessMemoryStore();
 
-        new HarnessMemorySyncService(store).persistIfChanged(workspace);
+        new HarnessMemorySyncService(store).persistIfChanged(workspace, workspace.resolve(MEMORY_FILE_NAME));
 
         assertEquals(0, store.saveCount, "workspace 无记忆文件时不该写入");
+    }
+
+    @Test
+    void hydrate_shouldCreateNamespaceDirectory_forNamespacedMemoryFile(@TempDir Path workspace) throws IOException {
+        HarnessMemoryStore store = new InMemoryHarnessMemoryStore();
+        store.save(scopeOf(workspace), "命名空间内的记忆");
+        Path namespaced = workspace.resolve("tenantA").resolve(MEMORY_FILE_NAME);
+
+        new HarnessMemorySyncService(store).hydrate(workspace, namespaced);
+
+        assertEquals("命名空间内的记忆", Files.readString(namespaced, StandardCharsets.UTF_8),
+            "框架按调用方 namespace 读写，水合必须写到那个子目录下（目录尚不存在时要先建）");
     }
 
     /** scopeOf 与 HarnessMemorySyncService 内部保持一致：绝对规范化路径。 */

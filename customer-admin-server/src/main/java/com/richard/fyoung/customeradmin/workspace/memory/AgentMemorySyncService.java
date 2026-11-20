@@ -1,6 +1,5 @@
 package com.richard.fyoung.customeradmin.workspace.memory;
 
-import com.richard.fyoung.customerwork.core.constant.AgentFileNames;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -13,7 +12,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 长期记忆同步：权威存储（{@link AgentMemoryStore}）与框架工作副本（{@code {workspace}/MEMORY.md}）
+ * 长期记忆同步：权威存储（{@link AgentMemoryStore}）与框架工作副本（{@code {workspace}/{namespace}/MEMORY.md}，位置由 {@code HarnessMemoryFiles} 解析）
  * 之间的双向同步。
  *
  * <ul>
@@ -40,14 +39,19 @@ public class AgentMemorySyncService {
         this.memoryStore = memoryStore;
     }
 
-    /** 水合：权威存储 → workspace/MEMORY.md（构建实例时调用）；权威侧为空且 workspace 有存量文件时反向入库。 */
-    public void hydrate(String agentCode, Path workspace) {
+    /**
+     * 水合：权威存储 → 框架工作副本（构建实例时调用）；权威侧为空且工作副本已存在时反向入库。
+     *
+     * @param memoryFile 框架为调用方实际读写的 MEMORY.md（{@code HarnessMemoryFiles} 解析）：随隔离范围
+     *                   落在 workspace 的 namespace 子目录下，自己拼 workspace 根会与框架读写错位
+     */
+    public void hydrate(String agentCode, Path memoryFile) {
         try {
-            Path memoryFile = workspace.resolve(AgentFileNames.MEMORY_MD);
             Optional<AgentMemorySnapshot> snapshot = memoryStore.load(agentCode);
             if (snapshot.isPresent()) {
+                Files.createDirectories(memoryFile.toAbsolutePath().getParent());
                 Files.writeString(memoryFile, snapshot.get().content(), StandardCharsets.UTF_8);
-                workspaceVersions.put(workspaceKey(agentCode, workspace), snapshot.get().version());
+                workspaceVersions.put(workspaceKey(agentCode, memoryFile), snapshot.get().version());
                 log.info("agent memory hydrated to workspace: agentCode={}", agentCode);
                 return;
             }
@@ -58,7 +62,7 @@ public class AgentMemorySyncService {
                 if (!created) {
                     throw new AgentMemoryVersionConflictException(agentCode, 0L);
                 }
-                workspaceVersions.put(workspaceKey(agentCode, workspace), 1L);
+                workspaceVersions.put(workspaceKey(agentCode, memoryFile), 1L);
                 log.info("legacy workspace memory imported into store: agentCode={}", agentCode);
             }
         } catch (Exception e) {
@@ -66,20 +70,19 @@ public class AgentMemorySyncService {
         }
     }
 
-    /** 回写：workspace/MEMORY.md → 权威存储（对话轮次结束后调用）；文件不存在或内容未变化时跳过。 */
-    public void persistIfChanged(String agentCode, Path workspace) {
+    /** 回写：框架工作副本 → 权威存储（对话轮次结束后调用）；文件不存在或内容未变化时跳过。参数同 {@link #hydrate}。 */
+    public void persistIfChanged(String agentCode, Path memoryFile) {
         try {
-            Path memoryFile = workspace.resolve(AgentFileNames.MEMORY_MD);
             if (!Files.exists(memoryFile)) {
                 return;
             }
             String content = Files.readString(memoryFile, StandardCharsets.UTF_8);
             Optional<AgentMemorySnapshot> current = memoryStore.load(agentCode);
             if (current.isPresent() && content.equals(current.get().content())) {
-                workspaceVersions.put(workspaceKey(agentCode, workspace), current.get().version());
+                workspaceVersions.put(workspaceKey(agentCode, memoryFile), current.get().version());
                 return;
             }
-            String workspaceKey = workspaceKey(agentCode, workspace);
+            String workspaceKey = workspaceKey(agentCode, memoryFile);
             long expectedVersion = current.isEmpty() ? 0L
                 : workspaceVersions.getOrDefault(workspaceKey, current.get().version());
             if (!memoryStore.compareAndSet(agentCode, content, expectedVersion)) {
@@ -92,7 +95,7 @@ public class AgentMemorySyncService {
         }
     }
 
-    private String workspaceKey(String agentCode, Path workspace) {
-        return agentCode + "\u001f" + workspace.toAbsolutePath().normalize();
+    private String workspaceKey(String agentCode, Path memoryFile) {
+        return agentCode + "\u001f" + memoryFile.toAbsolutePath().normalize();
     }
 }

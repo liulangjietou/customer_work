@@ -45,7 +45,7 @@ class AgentMemorySyncServiceTest {
         when(store.load(AGENT_CODE))
             .thenReturn(Optional.of(new AgentMemorySnapshot("from-store", LocalDateTime.now())));
 
-        service.hydrate(AGENT_CODE, workspace);
+        service.hydrate(AGENT_CODE, workspace.resolve("MEMORY.md"));
 
         assertEquals("from-store", Files.readString(workspace.resolve("MEMORY.md"), StandardCharsets.UTF_8));
     }
@@ -56,7 +56,7 @@ class AgentMemorySyncServiceTest {
         when(store.compareAndSet(AGENT_CODE, "legacy", 0L)).thenReturn(true);
         Files.writeString(workspace.resolve("MEMORY.md"), "legacy", StandardCharsets.UTF_8);
 
-        service.hydrate(AGENT_CODE, workspace);
+        service.hydrate(AGENT_CODE, workspace.resolve("MEMORY.md"));
 
         verify(store).compareAndSet(AGENT_CODE, "legacy", 0L);
     }
@@ -65,7 +65,7 @@ class AgentMemorySyncServiceTest {
     void hydrate_shouldDoNothing_whenBothSidesEmpty() {
         when(store.load(AGENT_CODE)).thenReturn(Optional.empty());
 
-        service.hydrate(AGENT_CODE, workspace);
+        service.hydrate(AGENT_CODE, workspace.resolve("MEMORY.md"));
 
         verify(store, never()).compareAndSet(anyString(), anyString(), org.mockito.ArgumentMatchers.anyLong());
     }
@@ -77,7 +77,7 @@ class AgentMemorySyncServiceTest {
             .thenReturn(Optional.of(new AgentMemorySnapshot("v1", LocalDateTime.now())));
         when(store.compareAndSet(eq(AGENT_CODE), eq("v2"), eq(1L))).thenReturn(true);
 
-        service.persistIfChanged(AGENT_CODE, workspace);
+        service.persistIfChanged(AGENT_CODE, workspace.resolve("MEMORY.md"));
 
         verify(store).compareAndSet(AGENT_CODE, "v2", 1L);
     }
@@ -88,14 +88,14 @@ class AgentMemorySyncServiceTest {
         when(store.load(AGENT_CODE))
             .thenReturn(Optional.of(new AgentMemorySnapshot("same", LocalDateTime.now())));
 
-        service.persistIfChanged(AGENT_CODE, workspace);
+        service.persistIfChanged(AGENT_CODE, workspace.resolve("MEMORY.md"));
 
         verify(store, never()).compareAndSet(anyString(), anyString(), org.mockito.ArgumentMatchers.anyLong());
     }
 
     @Test
     void persistIfChanged_shouldSkip_whenWorkspaceFileAbsent() {
-        service.persistIfChanged(AGENT_CODE, workspace);
+        service.persistIfChanged(AGENT_CODE, workspace.resolve("MEMORY.md"));
 
         verify(store, never()).save(anyString(), anyString());
     }
@@ -105,9 +105,21 @@ class AgentMemorySyncServiceTest {
         // 同步失败不允许打断对话主链路/实例构建（本服务是记忆同步链路的唯一异常兜底点）
         when(store.load(anyString())).thenThrow(new IllegalStateException("db down"));
 
-        assertDoesNotThrow(() -> service.hydrate(AGENT_CODE, workspace));
-        assertDoesNotThrow(() -> service.persistIfChanged(AGENT_CODE, workspace));
+        assertDoesNotThrow(() -> service.hydrate(AGENT_CODE, workspace.resolve("MEMORY.md")));
+        assertDoesNotThrow(() -> service.persistIfChanged(AGENT_CODE, workspace.resolve("MEMORY.md")));
         verify(store, never()).compareAndSet(any(), any(), org.mockito.ArgumentMatchers.anyLong());
+    }
+
+    @Test
+    void hydrate_shouldCreateNamespaceDirectory_forNamespacedMemoryFile() throws Exception {
+        when(store.load(AGENT_CODE))
+            .thenReturn(Optional.of(new AgentMemorySnapshot("from-store", LocalDateTime.now())));
+        Path namespaced = workspace.resolve("caller-ns").resolve("MEMORY.md");
+
+        service.hydrate(AGENT_CODE, namespaced);
+
+        assertEquals("from-store", Files.readString(namespaced, StandardCharsets.UTF_8),
+            "框架按调用方 namespace 读写，水合必须写到那个子目录下（目录尚不存在时要先建）");
     }
 
     @Test
@@ -121,13 +133,13 @@ class AgentMemorySyncServiceTest {
         sharedStore.save(AGENT_CODE, "v1");
         AgentMemorySyncService serviceA = new AgentMemorySyncService(sharedStore);
         AgentMemorySyncService serviceB = new AgentMemorySyncService(sharedStore);
-        serviceA.hydrate(AGENT_CODE, podA);
-        serviceB.hydrate(AGENT_CODE, podB);
+        serviceA.hydrate(AGENT_CODE, podA.resolve("MEMORY.md"));
+        serviceB.hydrate(AGENT_CODE, podB.resolve("MEMORY.md"));
         Files.writeString(podA.resolve("MEMORY.md"), "pod-a-update", StandardCharsets.UTF_8);
         Files.writeString(podB.resolve("MEMORY.md"), "pod-b-stale-update", StandardCharsets.UTF_8);
 
-        serviceA.persistIfChanged(AGENT_CODE, podA);
-        serviceB.persistIfChanged(AGENT_CODE, podB);
+        serviceA.persistIfChanged(AGENT_CODE, podA.resolve("MEMORY.md"));
+        serviceB.persistIfChanged(AGENT_CODE, podB.resolve("MEMORY.md"));
 
         assertEquals("pod-a-update", sharedStore.load(AGENT_CODE).orElseThrow().content(),
             "旧版本工作副本不得覆盖已提交的并发更新");

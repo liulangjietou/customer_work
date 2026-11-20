@@ -1,6 +1,5 @@
 package com.richard.fyoung.customeradmin.workspace.chat.service;
 
-import com.richard.fyoung.customeradmin.workspace.runtime.AgentWorkspaceManager;
 import com.richard.fyoung.customeradmin.workspace.memory.AgentMemorySyncService;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
@@ -57,6 +56,6 @@ class ChatSessionSerializationTest {
         when(lockProvider.getIfAvailable()).thenReturn(lock);
         return new ChatService(mock(AgentInstanceCache.class), mock(AdminAgentInstanceFactory.class),
             mock(ChatHistoryCache.class), mock(AgentMemorySyncService.class), new ExecutionModeRegistry(),
-            new PlanConfirmationService(), mock(ChatAttachmentService.class), null, null, lockProvider, new AgentWorkspaceManager(null));
+            new PlanConfirmationService(), mock(ChatAttachmentService.class), null, null, lockProvider);
     }
 }

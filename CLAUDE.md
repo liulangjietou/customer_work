@@ -16,12 +16,22 @@
 
 ## 分支策略
 
-- `main` = AgentScope 2.0.4（2026-07 起 2.0.0 GA，批次二升 2.0.2，2026-09-10 升 2.0.3，2026-11-03 升 2.0.4）。
+- `main` = AgentScope 2.0.5（2026-07 起 2.0.0 GA，批次二升 2.0.2，2026-09-10 升 2.0.3，2026-11-03 升 2.0.4，2026-11-20 升 2.0.5）。
   **官方 main 分支 pom 里的版本是 `2.1.0-SNAPSHOT`，不是发布版**——"对齐官方最新"以 Maven Central
   `agentscope-bom` 的 release 为准，预发布（`-BETA`/`-RC`）不用于生产。2.0.4 升级唯一的编译破坏是
   `GenerateReason` 新增 `TOOL_RETURN_DIRECT`（`returnDirect` 工具结果直接作为最终答复），穷举 switch 会炸；
   本项目没有工具启用 returnDirect，`ReplyFinish` 缓存白名单不含它（工具直出内容不进语义缓存）。
   全量 5031（starter 2358/6 skip、app-server 302、channel 82、admin 2288/1 skip、gateway 1）。
+  **2.0.5 零编译破坏、弃用告警与 2.0.4 逐条一致（各 161 条），但打掉了 Harness 分层记忆**：
+  框架按隔离范围把 `MEMORY.md` 放在 `{workspace}/{namespace}/`（USER→userId、SESSION→sessionId、
+  AGENT/GLOBAL→根；未挂 filesystem 默认 USER），2.0.4 起写入如此、2.0.5 起读取也不再回落 workspace 根。
+  starter 与 admin 的同步服务都自己拼 `workspace/MEMORY.md`——升级后水合的记忆框架读到空串，
+  而框架沉淀的记忆**从 2.0.4 起就没回写过**，admin「清空记忆」也删不到框架在读的那份，全程不报错。
+  现在路径一律交给框架解析（`HarnessMemoryFiles`，有实例问实例、无实例按「工作区 + 隔离范围」），
+  `HarnessMemoryFilesContractTest` 用真实构建的 HarnessAgent 钉住，变异回旧约定 3 条红。
+  **凡是「项目代码自己拼框架目录约定」的地方，升级都要回头核对**。starter 的 `persistMemory` 自引入起
+  从无调用方（starter 分层记忆默认关、只水合不回写），本批只修位置、未接线。
+  2.0.5 全量 5038（starter 2363/6 skip、app-server 302、channel 82、admin 2290/1 skip、gateway 1）。
   **有分支保护，禁止直接 push，必须走 PR**。
 - `legacy-main-1.0.12` 标签 = 升级前 1.0.12 最后状态；`rc2.0` 分支 = RC4 首轮迁移存档；`ga2.0` 分支 = 已并入 main 的历史开发分支（保留不删）。
 
