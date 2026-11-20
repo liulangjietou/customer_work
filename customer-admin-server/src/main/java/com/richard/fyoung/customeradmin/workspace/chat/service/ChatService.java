@@ -12,7 +12,6 @@ import com.richard.fyoung.customeradmin.workspace.memory.AgentMemoryScope;
 import com.richard.fyoung.customeradmin.workspace.memory.AgentMemorySyncService;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
-import com.richard.fyoung.customeradmin.workspace.runtime.AgentWorkspaceManager;
 import com.richard.fyoung.customeradmin.workspace.runtime.ToolSourceInfo;
 import com.richard.fyoung.customeradmin.workspace.runtime.mode.ExecutionMode;
 import com.richard.fyoung.customeradmin.workspace.runtime.mode.ExecutionModeRegistry;
@@ -53,7 +52,7 @@ import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.model.ChatUsage;
 import io.agentscope.harness.agent.HarnessAgent;
-import java.nio.file.Path;
+import com.richard.fyoung.customerwork.core.memory.HarnessMemoryFiles;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -101,7 +100,6 @@ public class ChatService {
 
     private final AgentInstanceCache agentInstanceCache;
     private final AdminAgentInstanceFactory agentInstanceFactory;
-    private final AgentWorkspaceManager workspaceManager;
     private final ChatHistoryCache historyCache;
     private final AgentMemorySyncService memorySyncService;
     private final ExecutionModeRegistry executionModeRegistry;
@@ -123,10 +121,8 @@ public class ChatService {
                         ObjectProvider<SensitiveWordFilter> sensitiveWordFilterProvider,
                         ObjectProvider<ContentGuardProperties> contentGuardPropertiesProvider,
                         ObjectProvider<SessionLock> sessionLockProvider,
-                        AgentWorkspaceManager workspaceManager,
                         ChatCompletionVerifier completionVerifier) {
         this.completionVerifier = completionVerifier;
-        this.workspaceManager = workspaceManager;
         this.agentInstanceCache = agentInstanceCache;
         this.agentInstanceFactory = agentInstanceFactory;
         this.historyCache = historyCache;
@@ -151,10 +147,9 @@ public class ChatService {
                        ChatHistoryCache history, AgentMemorySyncService memorySync,
                        ExecutionModeRegistry modes, PlanConfirmationService plans,
                        ChatAttachmentService attachments, ObjectProvider<SensitiveWordFilter> filters,
-                       ObjectProvider<ContentGuardProperties> guards, ObjectProvider<SessionLock> locks,
-                       AgentWorkspaceManager workspaces) {
+                       ObjectProvider<ContentGuardProperties> guards, ObjectProvider<SessionLock> locks) {
         this(cache, factory, history, memorySync, modes, plans, attachments, filters, guards,
-            locks, workspaces, null);
+            locks, null);
     }
 
     /** 保留既有单测/嵌入式调用构造；生产由 Spring 注入强一致分布式锁。 */
@@ -167,7 +162,7 @@ public class ChatService {
                        ObjectProvider<ContentGuardProperties> contentGuardPropertiesProvider) {
         this(agentInstanceCache, agentInstanceFactory, historyCache, memorySyncService, executionModeRegistry,
             planConfirmationService, chatAttachmentService, sensitiveWordFilterProvider,
-            contentGuardPropertiesProvider, null, new AgentWorkspaceManager(null));
+            contentGuardPropertiesProvider, null);
     }
 
     /**
@@ -329,7 +324,6 @@ public class ChatService {
             KnowledgeRetrievalCapture.bind(ctx, new KnowledgeRetrievalCapture());
         }
         AgentMemoryScope memoryScope = AgentMemoryScope.current(agentCode);
-        Path memoryWorkspace = workspaceManager.resolveWorkspace(memoryScope);
         // 在 Tomcat 线程上把限流主体取下来：下面整条链会切到 Reactor 线程，ThreadLocal 到不了那边，
         // 而 token 记账（AgentCallTimingMiddleware）恰恰发生在那里。主体由 AdminQuotaInterceptor 写入，
         // 功能关闭或非 AI 入口时为 null，此时不写 Context。
@@ -409,10 +403,14 @@ public class ChatService {
             })
             .doOnComplete(() -> {
                 historyCache.evict(memoryScope, sessionId);
-                // 长期记忆回写：框架的记忆 flush 只落 workspace/MEMORY.md 工作副本，这里把变更同步回
-                // 权威存储（默认库表）。非记忆智能体没有 MEMORY.md，方法内直接短路，无额外开销；
+                // 长期记忆回写：框架的记忆 flush 只落工作副本，这里把变更同步回权威存储（默认库表）。
+                // 工作副本的位置随隔离范围落在本次调用方的 namespace 下，用本次调用的 ctx 向实例解析；
+                // 非 Harness 实例没有分层记忆，非记忆智能体没有 MEMORY.md，方法内直接短路；
                 // 同步失败只记日志不打断流（见 AgentMemorySyncService 的兜底约定）
-                memorySyncService.persistIfChanged(memoryScope.storageKey(), memoryWorkspace);
+                if (agent instanceof HarnessAgent harness) {
+                    memorySyncService.persistIfChanged(memoryScope.storageKey(),
+                        HarnessMemoryFiles.memoryFile(harness, ctx));
+                }
             })
             // 用量回调必须在终止信号"向下游传播之前"执行，故用 peek 语义的 doOnComplete/doOnCancel
             // 而不是 doFinally：Reactor 的 doFinally 是先把 onComplete 传给下游、回调最后才跑，下游

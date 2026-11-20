@@ -29,8 +29,8 @@ import static org.mockito.Mockito.when;
 import static org.mockito.ArgumentMatchers.any;
 
 /**
- * {@link AgentMemoryService} 单测：查看走权威存储（查看前先回写同步）、清空同时删权威存储与
- * workspace 工作副本（含 memory/ 原料目录、幂等）。
+ * {@link AgentMemoryService} 单测：查看走权威存储（查看前先回写同步）、清空同时删权威存储、
+ * 框架实际读写的 namespace 工作副本与 workspace 根下的遗留副本（含 memory/ 原料目录、幂等）。
  * @author owlzhangfq@gmail.com
  */
 class AgentMemoryServiceTest {
@@ -54,6 +54,11 @@ class AgentMemoryServiceTest {
         when(agentService.requireAgent(AGENT_ID)).thenReturn(agent);
 
         AdminAgentInstanceFactory instanceFactory = mock(AdminAgentInstanceFactory.class);
+        // 框架按调用方 namespace 放工作副本（不在 workspace 根下），位置由实例工厂解析
+        when(instanceFactory.memoryFile(any(AiAgent.class), any(AgentMemoryScope.class)))
+            .thenReturn(namespacedMemoryFile());
+        when(instanceFactory.memoryDir(any(AiAgent.class), any(AgentMemoryScope.class)))
+            .thenReturn(namespacedMemoryDir());
         AgentWorkspaceManager workspaceManager = mock(AgentWorkspaceManager.class);
         when(workspaceManager.resolveWorkspace(any(AgentMemoryScope.class))).thenReturn(workspace);
 
@@ -71,8 +76,8 @@ class AgentMemoryServiceTest {
         assertFalse(vo.exists());
         assertEquals("", vo.content());
         assertNull(vo.updateTime());
-        // 查看前必须先做一次 workspace → 权威存储的回写同步，保证能看到最近一轮 flush 的内容
-        verify(memorySyncService).persistIfChanged(AGENT_CODE, workspace);
+        // 查看前必须先做一次工作副本 → 权威存储的回写同步，且同步的是框架实际读写的那一份
+        verify(memorySyncService).persistIfChanged(AGENT_CODE, namespacedMemoryFile());
     }
 
     @Test
@@ -105,11 +110,31 @@ class AgentMemoryServiceTest {
     }
 
     @Test
+    void clearMemory_shouldDeleteNamespacedWorkingCopy_thatFrameworkActuallyReads() throws Exception {
+        Files.createDirectories(namespacedMemoryDir().resolve("2026-11"));
+        Files.writeString(namespacedMemoryFile(), "profile", StandardCharsets.UTF_8);
+        Files.writeString(namespacedMemoryDir().resolve("2026-11").resolve("daily.md"), "daily", StandardCharsets.UTF_8);
+
+        service.clearMemory(AGENT_ID);
+
+        assertFalse(Files.exists(namespacedMemoryFile()), "只删 workspace 根下的副本，运行中的实例照样读到旧记忆");
+        assertFalse(Files.exists(namespacedMemoryDir()));
+    }
+
+    @Test
     void clearMemory_shouldBeIdempotent_whenNothingExists() {
         service.clearMemory(AGENT_ID);
 
         verify(memoryStore).delete(AGENT_CODE);
         assertFalse(Files.exists(workspace.resolve("MEMORY.md")));
         assertFalse(Files.exists(workspace.resolve("memory")));
+    }
+
+    private Path namespacedMemoryFile() {
+        return workspace.resolve("caller-ns").resolve("MEMORY.md");
+    }
+
+    private Path namespacedMemoryDir() {
+        return workspace.resolve("caller-ns").resolve("memory");
     }
 }

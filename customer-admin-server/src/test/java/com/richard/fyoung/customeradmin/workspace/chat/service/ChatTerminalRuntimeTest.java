@@ -6,7 +6,6 @@ import com.richard.fyoung.customeradmin.workspace.chat.dto.ChatStreamChunk;
 import com.richard.fyoung.customeradmin.workspace.memory.AgentMemorySyncService;
 import com.richard.fyoung.customeradmin.workspace.runtime.AdminAgentInstanceFactory;
 import com.richard.fyoung.customeradmin.workspace.runtime.AgentInstanceCache;
-import com.richard.fyoung.customeradmin.workspace.runtime.AgentWorkspaceManager;
 import com.richard.fyoung.customeradmin.workspace.runtime.ToolSourceInfo;
 import com.richard.fyoung.customeradmin.workspace.runtime.mode.ExecutionModeRegistry;
 import com.richard.fyoung.customeradmin.workspace.vibecoding.service.PlanConfirmationService;
@@ -143,7 +142,7 @@ class ChatTerminalRuntimeTest {
             }
             var service = new ChatService(cache, factory, mock(ChatHistoryCache.class),
                 mock(AgentMemorySyncService.class), new ExecutionModeRegistry(), new PlanConfirmationService(),
-                mock(ChatAttachmentService.class), null, null, null, new AgentWorkspaceManager(null),
+                mock(ChatAttachmentService.class), null, null, null,
                 new ChatCompletionVerifier(stateStore, sources));
             var chunks = service.chatStream("coder", "session-1", "测试输入").collectList().block(Duration.ofSeconds(10));
             assertEquals(failSave ? ChatMessagePhase.FAILED : ChatMessagePhase.FINAL,

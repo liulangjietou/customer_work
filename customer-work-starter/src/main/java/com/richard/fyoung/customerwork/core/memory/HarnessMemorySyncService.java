@@ -1,6 +1,5 @@
 package com.richard.fyoung.customerwork.core.memory;
 
-import com.richard.fyoung.customerwork.core.constant.AgentFileNames;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -12,7 +11,7 @@ import java.util.Optional;
 
 /**
  * Harness 分层记忆同步：权威存储（{@link HarnessMemoryStore}）与框架工作副本
- * （{@code {workspace}/MEMORY.md}）之间的双向同步。
+ * （{@code {workspace}/{namespace}/MEMORY.md}，位置见 {@link HarnessMemoryFiles}）之间的双向同步。
  *
  * <ul>
  *   <li><b>水合</b>（{@link #hydrate}）：构建 HarnessAgent 时把权威副本写到 workspace，保证换机 / 重启 /
@@ -31,22 +30,25 @@ public class HarnessMemorySyncService {
 
     private static final Logger log = LoggerFactory.getLogger(HarnessMemorySyncService.class);
 
-    /** 框架分层记忆的工作副本文件名（workspace 根下，路径约定来自 Harness WorkspaceManager）。 */
-
     private final HarnessMemoryStore memoryStore;
 
     public HarnessMemorySyncService(HarnessMemoryStore memoryStore) {
         this.memoryStore = memoryStore;
     }
 
-    /** 水合：权威存储 → workspace/MEMORY.md；权威侧为空且 workspace 有存量文件时反向入库。 */
-    public void hydrate(Path workspace) {
+    /**
+     * 水合：权威存储 → 框架工作副本；权威侧为空且工作副本已存在时反向入库。
+     *
+     * @param workspace  记忆归属的工作区（决定权威存储的键）
+     * @param memoryFile 框架为调用方实际读写的 MEMORY.md，由 {@link HarnessMemoryFiles} 解析，
+     *                   随隔离范围落在 workspace 的 namespace 子目录下，不能自己拼 workspace 根
+     */
+    public void hydrate(Path workspace, Path memoryFile) {
         String scopeId = scopeOf(workspace);
         try {
-            Path memoryFile = workspace.resolve(AgentFileNames.MEMORY_MD);
             Optional<String> stored = memoryStore.load(scopeId);
             if (stored.isPresent()) {
-                Files.createDirectories(workspace);
+                Files.createDirectories(memoryFile.toAbsolutePath().getParent());
                 Files.writeString(memoryFile, stored.get(), StandardCharsets.UTF_8);
                 log.info("harness memory hydrated to workspace: scopeId={}", scopeId);
                 return;
@@ -62,11 +64,10 @@ public class HarnessMemorySyncService {
         }
     }
 
-    /** 回写：workspace/MEMORY.md → 权威存储（对话轮次结束后调用）；文件不存在或内容未变化时跳过。 */
-    public void persistIfChanged(Path workspace) {
+    /** 回写：框架工作副本 → 权威存储（对话轮次结束后调用）；文件不存在或内容未变化时跳过。参数同 {@link #hydrate}。 */
+    public void persistIfChanged(Path workspace, Path memoryFile) {
         String scopeId = scopeOf(workspace);
         try {
-            Path memoryFile = workspace.resolve(AgentFileNames.MEMORY_MD);
             if (!Files.exists(memoryFile)) {
                 return;
             }

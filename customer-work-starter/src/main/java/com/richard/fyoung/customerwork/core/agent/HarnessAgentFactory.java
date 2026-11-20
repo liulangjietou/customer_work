@@ -3,6 +3,7 @@ package com.richard.fyoung.customerwork.core.agent;
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
 import com.richard.fyoung.customerwork.infra.config.RuntimeWorkDir;
 import com.richard.fyoung.customerwork.core.memory.ContextMemoryFactory;
+import com.richard.fyoung.customerwork.core.memory.HarnessMemoryFiles;
 import com.richard.fyoung.customerwork.core.memory.HarnessMemorySyncService;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.model.GenerateOptions;
@@ -109,14 +110,8 @@ public class HarnessAgentFactory {
             builder.compaction(compaction);
         }
 
-        // 分层记忆：MEMORY.md 持久画像 + 会话沉淀 + 自动 consolidation
-        // 框架只从 workspace 文件读记忆，故构建前先把 MySQL 里的权威副本水合下来——
-        // 否则换机 / 重启 / 清理 workspace 之后，历史记忆对框架就等于不存在。
+        // 分层记忆：MEMORY.md 持久画像 + 会话沉淀 + 自动 consolidation（水合见 build 之后）
         boolean memoryEnabled = cfg.isMemoryEnabled();
-        if (memoryEnabled) {
-            memorySyncService.hydrate(resolveWorkspace(cfg.getWorkspaceDir()));
-            log.info("[Harness] layered memory enabled (MEMORY.md + consolidation)");
-        }
         HarnessMemoryPolicy.apply(builder, memoryEnabled, model);
 
         // 环境级记忆：跨会话共享的环境记忆
@@ -166,6 +161,14 @@ public class HarnessAgentFactory {
 
         HarnessAgent harnessAgent = builder.build();
         HarnessOptInPolicy.pruneBuiltInTools(harnessAgent, cfg.getSubagent().isEnabled(), false);
+        if (memoryEnabled) {
+            // 框架只从 workspace 文件读记忆，故首轮调用前把 MySQL 里的权威副本水合下来——否则换机 / 重启 /
+            // 清理 workspace 之后，历史记忆对框架就等于不存在。文件位置随隔离范围落在调用方的 namespace 下，
+            // 必须用本会话调用时的同一个 RuntimeContext 向实例解析（见 HarnessMemoryFiles）。
+            memorySyncService.hydrate(resolveWorkspace(cfg.getWorkspaceDir()),
+                HarnessMemoryFiles.memoryFile(harnessAgent, agentFactory.contextFor(sessionId)));
+            log.info("[Harness] layered memory enabled (MEMORY.md + consolidation)");
+        }
         log.info("[Harness] HarnessAgent built for session {}", sessionId);
         return harnessAgent;
     }
@@ -179,12 +182,13 @@ public class HarnessAgentFactory {
      *
      * <p>{@code harness.memory-enabled=false} 时无记忆可回写，直接跳过。</p>
      */
-    public void persistMemory() {
+    public void persistMemory(HarnessAgent agent, String sessionId) {
         HarnessProperties cfg = properties.getHarness();
         if (!cfg.isMemoryEnabled()) {
             return;
         }
-        memorySyncService.persistIfChanged(resolveWorkspace(cfg.getWorkspaceDir()));
+        memorySyncService.persistIfChanged(resolveWorkspace(cfg.getWorkspaceDir()),
+            HarnessMemoryFiles.memoryFile(agent, agentFactory.contextFor(sessionId)));
     }
 
     /**

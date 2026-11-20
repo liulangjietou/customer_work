@@ -88,6 +88,7 @@ import io.agentscope.core.tracing.OtelTracingMiddleware;
 import io.agentscope.harness.agent.HarnessAgent;
 import io.agentscope.harness.agent.subagent.task.TaskRepository;
 import io.agentscope.harness.agent.IsolationScope;
+import com.richard.fyoung.customerwork.core.memory.HarnessMemoryFiles;
 import io.agentscope.harness.agent.filesystem.spec.LocalFilesystemSpec;
 import io.agentscope.harness.agent.filesystem.spec.SandboxFilesystemSpec;
 import io.agentscope.harness.agent.memory.compaction.CompactionConfig;
@@ -150,6 +151,8 @@ public class AdminAgentInstanceFactory {
     private static final int DEFAULT_COMPRESS_TRIGGER_MSGS = 40;
     /** Plan Mode 计划文件目录名（workspace 下的子目录）。 */
     private static final String PLAN_DIR_NAME = "plans";
+    /** vibecoding 挂 filesystem 时的隔离范围：一个智能体一份工作区，运行期数据不再按调用方分子目录。 */
+    private static final IsolationScope VIBECODING_ISOLATION = IsolationScope.AGENT;
     private static final long BYTES_PER_MB = 1024L * 1024L;
     private static final String SKILL_ROOT = RuntimeWorkDir.of("admin-skills");
     /** 会话产物目录名（{@code {agentCode}/sessions/}），docker 模式下 bind mount 前置预建的子目录之一。 */
@@ -335,6 +338,35 @@ public class AdminAgentInstanceFactory {
     /** 查该智能体当前已装配的工具来源登记表；从未 {@link #build} 过（比如尚未触发过对话）时返回空表。 */
     public ToolSourceInfo toolSourceFor(String agentCode) {
         return toolSourceCache.getOrDefault(WorkspaceRuntimeScope.agent(agentCode), ToolSourceInfo.EMPTY);
+    }
+
+    /**
+     * 该智能体在指定主体分区下，框架实际读写 MEMORY.md 的位置（后台查看 / 清空记忆用，不必建实例）。
+     * 隔离范围必须与 {@link #buildHarnessAgent} 装配的一致：vibecoding 挂 filesystem 用
+     * {@link #VIBECODING_ISOLATION}，其余不挂 filesystem、取框架默认值。
+     */
+    public Path memoryFile(AiAgent agent, AgentMemoryScope scope) {
+        return HarnessMemoryFiles.memoryFile(workspaceManager.resolveWorkspace(scope),
+            harnessIsolation(agent), memoryContext(agent.getAgentCode(), scope));
+    }
+
+    /** 同 {@link #memoryFile}，解析记忆原料目录（按日 / 按会话沉淀的记忆文件）。 */
+    public Path memoryDir(AiAgent agent, AgentMemoryScope scope) {
+        return HarnessMemoryFiles.memoryDir(workspaceManager.resolveWorkspace(scope),
+            harnessIsolation(agent), memoryContext(agent.getAgentCode(), scope));
+    }
+
+    private IsolationScope harnessIsolation(AiAgent agent) {
+        return parseCapabilities(agent.getCapabilities()).contains(AgentCapabilities.VIBECODING)
+            ? VIBECODING_ISOLATION : HarnessMemoryFiles.BUILDER_DEFAULT_ISOLATION;
+    }
+
+    /** 定位记忆用的上下文：namespace 只取决于 userId（USER）或与调用方无关（AGENT），与 {@link #contextFor} 同源。 */
+    private static RuntimeContext memoryContext(String agentCode, AgentMemoryScope scope) {
+        return RuntimeContext.builder()
+            .userId(scope.stateUserId())
+            .sessionId(WorkspaceRuntimeScope.agent(agentCode))
+            .build();
     }
 
     /** 单次调用上下文：userId 同时包含租户与智能体作用域，避免框架状态表跨租户碰撞。 */
@@ -616,9 +648,8 @@ public class AdminAgentInstanceFactory {
         if (memoryEnabled) {
             // 跨会话长期记忆（分层记忆）：对话事实自动 flush 到 workspace/MEMORY.md 并定期 consolidation，
             // 按 agentCode 隔离（一个智能体一份记忆，全部会话共享）。workspace 文件只是框架的工作副本，
-            // 权威存储在 AgentMemoryStore（默认落库）：构建时水合到 workspace，对话轮次结束后由
+            // 权威存储在 AgentMemoryStore（默认落库）：实例建成后水合到框架工作副本，对话轮次结束后由
             // ChatService 回写（见 AgentMemorySyncService）
-            memorySyncService.hydrate(memoryScope.storageKey(), workspace);
             log.info("[workspace] layered memory enabled: agentCode={}", agentCode);
         }
         HarnessMemoryPolicy.apply(harnessBuilder, memoryEnabled, model);
@@ -640,6 +671,11 @@ public class AdminAgentInstanceFactory {
 
         HarnessAgent harnessAgent = harnessBuilder.build();
         HarnessOptInPolicy.pruneBuiltInTools(harnessAgent, staticSubagentsEnabled, dynamicSubagentsEnabled);
+        if (memoryEnabled) {
+            // 工作副本的位置随隔离范围落在调用方 namespace 下，只有建成的实例说得准（见 HarnessMemoryFiles）
+            memorySyncService.hydrate(memoryScope.storageKey(),
+                HarnessMemoryFiles.memoryFile(harnessAgent, memoryContext(agentCode, memoryScope)));
+        }
         log.info("[workspace] harness agent built: agentCode={} capabilities={} sandboxMode={}",
             agentCode, capabilities, vibecoding ? sandboxProperties.getMode() : "none");
         return harnessAgent;
@@ -700,7 +736,7 @@ public class AdminAgentInstanceFactory {
     private LocalFilesystemSpec buildLocalFilesystemSpec() {
         return new LocalFilesystemSpec()
             .executeTimeoutSeconds(sandboxProperties.getExecuteTimeoutSeconds())
-            .isolationScope(IsolationScope.AGENT);
+            .isolationScope(VIBECODING_ISOLATION);
     }
 
     /**
@@ -748,7 +784,7 @@ public class AdminAgentInstanceFactory {
             .additionalRunArgs(runArgs)
             .workspaceSpec(workspaceSpec)
             .workspaceProjectionEnabled(false)
-            .isolationScope(IsolationScope.AGENT);
+            .isolationScope(VIBECODING_ISOLATION);
     }
 
     private AiAgent requireEnabledAgent(String agentCode) {
