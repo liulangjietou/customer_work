@@ -75,6 +75,11 @@ public class CustomerServiceController {
         String sessionId = resolveSessionId(request.sessionId());
         return chatTurnService.stream(sessionId, request.message(), null)
             .map(event -> {
+                if (event instanceof ChatTurnEvent.Thinking thinking) {
+                    return ServerSentEvent.builder((Object) thinking.content())
+                        .event("thinking")
+                        .build();
+                }
                 if (event instanceof ChatTurnEvent.Delta delta) {
                     return ServerSentEvent.builder((Object) delta.content())
                         .event("message")

@@ -293,4 +293,33 @@ class ChatDispatchServiceTest {
         verify(registry).pushToAgent(eq("agent-2"), argThat(f -> typeIs(f, WsFrame.TYPE_ERROR)));
         verify(chatLogService, never()).append(any(), any(), any(), any(), any());
     }
+
+    @Test
+    void aiStream_shouldPushThinkingFramesBeforeChunks() {
+        when(ticketService.findActiveBySession(SESSION_ID)).thenReturn(Optional.of(aiServing()));
+        when(keywordDetector.hit(anyString())).thenReturn(false);
+        ChatMessage botMsg = ChatMessage.of("MSG-think", SESSION_ID, "TK-1",
+            TicketActorType.BOT, null, "订单已发货").withId(25);
+        ChatTerminalEnvelope terminal = new ChatTerminalEnvelope("MSG-think", "MODEL_STOP",
+            new ChatUsageSnapshot(8, 2, 0, 10, 0.1), "trace-think", List.of(), List.of());
+        when(chatTurnService.stream(SESSION_ID, "查物流", "TK-1")).thenReturn(Flux.just(
+            new ChatTurnEvent.Thinking("先核对订单状态"),
+            new ChatTurnEvent.Delta("订单已发货"),
+            new ChatTurnEvent.Completed(new ChatTurnCompletion(botMsg, terminal))));
+
+        StepVerifier.create(dispatch.onUserMessage(user, SESSION_ID, "查物流", "cmid-think")).verifyComplete();
+
+        verify(registry).pushToUser(eq(USER_ID), argThat(frame -> {
+            if (!typeIs(frame, WsFrame.TYPE_CHAT_THINKING)) {
+                return false;
+            }
+            java.util.Map<?, ?> data = (java.util.Map<?, ?>) frame.data();
+            return "先核对订单状态".equals(data.get(WsFrame.KEY_CONTENT))
+                && SESSION_ID.equals(data.get(WsFrame.KEY_SESSION_ID))
+                && "TK-1".equals(data.get(WsFrame.KEY_TICKET_ID))
+                && "cmid-think".equals(data.get(WsFrame.KEY_CLIENT_MSG_ID));
+        }));
+        verify(registry).pushToUser(eq(USER_ID), argThat(f -> typeIs(f, WsFrame.TYPE_CHAT_CHUNK)));
+        verify(registry).pushToUser(eq(USER_ID), argThat(f -> typeIs(f, WsFrame.TYPE_CHAT_DONE)));
+    }
 }

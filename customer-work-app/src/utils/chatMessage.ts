@@ -14,5 +14,6 @@ export function mergeChatMessage(
     finishReason: incoming.finishReason ?? previous?.finishReason,
     citations: incoming.citations ?? previous?.citations,
     taskPlan: incoming.taskPlan ?? previous?.taskPlan,
+    thinking: incoming.thinking ?? previous?.thinking,
   }
 }

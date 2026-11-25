@@ -202,6 +202,23 @@ class CustomerServiceServiceTest {
     }
 
     @Test
+    void chatStreamEvents_shouldEmitThinkingAndTextDeltas_andDropSubagentThinking() {
+        ThinkingBlockDeltaEvent subagentThinking = new ThinkingBlockDeltaEvent("r-sub", "t-sub", "子智能体思考");
+        subagentThinking.withSource("AfterSalesExpert");
+        when(agent.streamEvents(anyList(), any(RuntimeContext.class)))
+            .thenReturn(Flux.just(
+                new ThinkingBlockDeltaEvent("r1", "t1", "先查订单"),
+                subagentThinking,
+                new TextBlockDeltaEvent("r1", "b1", "已为您查到"),
+                new AgentResultEvent(assistantMsg("已为您查到"))));
+
+        StepVerifier.create(service.chatStreamEvents("u3-thinking", "查订单"))
+            .expectNext(new ChatStreamEvent.Thinking("先查订单"))
+            .expectNext(new ChatStreamEvent.Text("已为您查到"))
+            .verifyComplete();
+    }
+
+    @Test
     void chatStream_nonStreamingFallback_shouldEmitAggregatedResultOnce() {
         // 非流式模型兜底：一个 TEXT_BLOCK_DELTA 都没有时，用 AGENT_RESULT 的全文补一次，避免空回复
         when(agent.streamEvents(anyList(), any(RuntimeContext.class)))

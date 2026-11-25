@@ -39,9 +39,15 @@ public class ChatTurnService {
             String traceId = ChatTraceContext.resolveOrCreate(contextView);
             StringBuilder reply = new StringBuilder();
 
-            Flux<ChatTurnEvent> deltas = customerServiceService.chatStream(sessionId, userText)
-                .doOnNext(reply::append)
-                .map(ChatTurnEvent.Delta::new);
+            Flux<ChatTurnEvent> deltas = customerServiceService.chatStreamEvents(sessionId, userText)
+                .map(event -> {
+                    if (event instanceof ChatStreamEvent.Thinking thinking) {
+                        return new ChatTurnEvent.Thinking(thinking.content());
+                    }
+                    ChatStreamEvent.Text text = (ChatStreamEvent.Text) event;
+                    reply.append(text.content());
+                    return new ChatTurnEvent.Delta(text.content());
+                });
             Mono<ChatTurnEvent> completed = Mono.defer(() ->
                     finalizer.complete(sessionId, ticketId, reply.toString(), capture, traceId))
                 .map(ChatTurnEvent.Completed::new);

@@ -208,9 +208,10 @@ class CustomerServiceAgentFactoryTest {
         var f = factory(props, provider, middlewares);
         var agent = f.createAgent("evidence-real-turn");
         var customerService = mock(CustomerServiceService.class);
-        Mockito.when(customerService.chatStream("evidence-real-turn", "退款"))
+        Mockito.when(customerService.chatStreamEvents("evidence-real-turn", "退款"))
             .thenReturn(agent.call("退款", f.contextFor("evidence-real-turn"))
-                .map(Msg::getTextContent).flux());
+                .map(msg -> (com.richard.fyoung.customerwork.core.service.ChatStreamEvent)
+                    new com.richard.fyoung.customerwork.core.service.ChatStreamEvent.Text(msg.getTextContent())).flux());
         var store = new InMemoryChatMessageStore();
         var service = new ChatTurnService(customerService,
             new ChatTurnFinalizer(

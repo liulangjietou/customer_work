@@ -389,12 +389,14 @@ public class ChatDispatchService {
         }
     }
 
-    /** AI 自助流式：逐增量推 chat_chunk，完成聚合落库 BOT 消息并推 chat_done。 */
+    /** AI 自助流式：逐增量推 chat_thinking / chat_chunk，完成聚合落库 BOT 消息并推 chat_done。 */
     private Mono<Void> streamAi(UserPrincipal user, String sessionId, String content, String ticketId, String clientMsgId) {
         String userId = user.userId();
         return chatTurnService.stream(sessionId, content, ticketId)
             .doOnNext(event -> TenantContext.runWith(tenantOf(user), () -> {
-                if (event instanceof ChatTurnEvent.Delta delta) {
+                if (event instanceof ChatTurnEvent.Thinking thinking) {
+                    registry.pushToUser(userId, WsFrame.chatThinking(thinking.content(), sessionId, ticketId, clientMsgId));
+                } else if (event instanceof ChatTurnEvent.Delta delta) {
                     registry.pushToUser(userId, WsFrame.chatChunk(delta.content(), sessionId, ticketId, clientMsgId));
                 } else if (event instanceof ChatTurnEvent.Completed completed) {
                     ChatMessage botMsg = completed.completion().message();
