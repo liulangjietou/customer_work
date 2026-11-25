@@ -50,11 +50,11 @@ class ChatTurnServiceTest {
             "售后政策", "refund-policy", "chunk-17", 0.91);
         var task = new TaskPlanItem("核对退款进度", "in_progress", "high");
         CustomerServiceService customerService = mock(CustomerServiceService.class);
-        when(customerService.chatStream("s-evidence", "退款进度")).thenReturn(Flux.deferContextual(context -> {
+        when(customerService.chatStreamEvents("s-evidence", "退款进度")).thenReturn(Flux.deferContextual(context -> {
             ChatTerminalCapture capture = ChatTerminalCaptureContext.get(context);
             capture.acceptCitations(List.of(citation));
             capture.acceptTaskPlan(List.of(task));
-            return Flux.just("退款尚在处理中");
+            return Flux.just(new ChatStreamEvent.Text("退款尚在处理中"));
         }));
         var store = new InMemoryChatMessageStore();
         var service = new ChatTurnService(customerService, new ChatTurnFinalizer(new ChatLogService(store)));
@@ -72,7 +72,8 @@ class ChatTurnServiceTest {
     @Test
     void stream_shouldPersistBeforeEmittingTerminalAndKeepTraceId() {
         CustomerServiceService customerService = mock(CustomerServiceService.class);
-        when(customerService.chatStream("s1", "hello")).thenReturn(Flux.just("你", "好"));
+        when(customerService.chatStreamEvents("s1", "hello")).thenReturn(
+            Flux.just(new ChatStreamEvent.Text("你"), new ChatStreamEvent.Text("好")));
         InMemoryChatMessageStore store = new InMemoryChatMessageStore();
         ChatTurnService service = new ChatTurnService(customerService,
             new ChatTurnFinalizer(new ChatLogService(store)));
@@ -96,7 +97,7 @@ class ChatTurnServiceTest {
     @Test
     void stream_shouldNotEmitFakeTerminalWhenPersistenceFails() {
         CustomerServiceService customerService = mock(CustomerServiceService.class);
-        when(customerService.chatStream("s1", "hello")).thenReturn(Flux.just("ok"));
+        when(customerService.chatStreamEvents("s1", "hello")).thenReturn(Flux.just(new ChatStreamEvent.Text("ok")));
         ChatLogService chatLog = mock(ChatLogService.class);
         when(chatLog.appendAnswer(ArgumentMatchers.eq("s1"), ArgumentMatchers.isNull(),
             ArgumentMatchers.eq("ok"), ArgumentMatchers.any()))
@@ -107,5 +108,28 @@ class ChatTurnServiceTest {
             .expectNextMatches(ChatTurnEvent.Delta.class::isInstance)
             .expectErrorMessage("db unavailable")
             .verify();
+    }
+
+    @Test
+    void stream_shouldForwardThinkingWithoutPersistingIntoAnswer() {
+        CustomerServiceService customerService = mock(CustomerServiceService.class);
+        when(customerService.chatStreamEvents("s-think", "退款条件")).thenReturn(Flux.just(
+            new ChatStreamEvent.Thinking("先核对退货政策"),
+            new ChatStreamEvent.Thinking("再整理回复"),
+            new ChatStreamEvent.Text("支持七天无理由退货")));
+        InMemoryChatMessageStore store = new InMemoryChatMessageStore();
+        ChatTurnService service = new ChatTurnService(customerService,
+            new ChatTurnFinalizer(new ChatLogService(store)));
+        AtomicReference<ChatTurnCompletion> completed = new AtomicReference<>();
+
+        StepVerifier.create(service.stream("s-think", "退款条件", "TK-think"))
+            .assertNext(event -> assertThat(((ChatTurnEvent.Thinking) event).content()).isEqualTo("先核对退货政策"))
+            .assertNext(event -> assertThat(((ChatTurnEvent.Thinking) event).content()).isEqualTo("再整理回复"))
+            .assertNext(event -> assertThat(((ChatTurnEvent.Delta) event).content()).isEqualTo("支持七天无理由退货"))
+            .assertNext(event -> completed.set(((ChatTurnEvent.Completed) event).completion()))
+            .verifyComplete();
+
+        ChatMessage saved = store.findByMessageId(completed.get().message().messageId()).orElseThrow();
+        assertThat(saved.content()).isEqualTo("支持七天无理由退货");
     }
 }

@@ -33,6 +33,7 @@ import type {
   WsChatChunk,
   WsChatDone,
   WsChatMessage,
+  WsChatThinking,
   WsErrorMessage,
   WsSystemMessage,
   WsTicketEvent,
@@ -133,9 +134,11 @@ function taskStatusLabel(status: string) {
   }
 }
 
-// 机器人流式回复：chat_chunk 增量拼接到这里做打字机效果，chat_done 定稿后清空并落入 messages
+// 机器人流式回复：chat_thinking / chat_chunk 增量拼接到这里做思考中与打字机效果，chat_done 定稿后清空并落入 messages
+const streamingThinking = ref('')
 const streamingContent = ref('')
-const streamingActive = computed(() => streamingContent.value.length > 0)
+const streamingThinkingOnly = computed(() => streamingThinking.value.length > 0 && streamingContent.value.length === 0)
+const streamingActive = computed(() => streamingContent.value.length > 0 || streamingThinking.value.length > 0)
 const interruptedReplies = ref<Array<{ id: number; label: string; content: string; clientMsgId: string | null }>>([])
 const streamingClientMessageId = ref<string | null>(null)
 let interruptedReplySequence = 0
@@ -375,6 +378,7 @@ function cacheSession(newSessionId: string, newTicketId: string) {
 
 /** 切换会话前的公共收尾：清掉上一个会话遗留的流式增量状态与未发送的附件 chips，避免串到新会话里。 */
 function resetStreamingState() {
+  streamingThinking.value = ''
   streamingContent.value = ''
   streamingSessionId.value = null
   interruptedReplies.value = []
@@ -449,6 +453,7 @@ function connectWs() {
   chatSocket.on('reconnecting', onWsReconnecting)
   chatSocket.on('chat', onWsChat)
   chatSocket.on('chat_accepted', delivery.accept)
+  chatSocket.on('chat_thinking', onWsChatThinking)
   chatSocket.on('chat_chunk', onWsChatChunk)
   chatSocket.on('chat_done', onWsChatDone)
   chatSocket.on('ticket_event', onWsTicketEvent)
@@ -463,6 +468,7 @@ function disconnectWs() {
   chatSocket.off('reconnecting', onWsReconnecting)
   chatSocket.off('chat', onWsChat)
   chatSocket.off('chat_accepted', delivery.accept)
+  chatSocket.off('chat_thinking', onWsChatThinking)
   chatSocket.off('chat_chunk', onWsChatChunk)
   chatSocket.off('chat_done', onWsChatDone)
   chatSocket.off('ticket_event', onWsTicketEvent)
@@ -509,6 +515,7 @@ function archiveInterruptedReply(label: string) {
       clientMsgId: streamingClientMessageId.value })
     streamingContent.value = ''
   }
+  streamingThinking.value = ''
   streamingSessionId.value = null
   streamingClientMessageId.value = null
 }
@@ -547,6 +554,18 @@ function upsertIncomingMessage(message: ChatMessage) {
   else messages.value.push(message)
 }
 
+function onWsChatThinking(data: unknown) {
+  const payload = data as WsChatThinking
+  if (streamingSessionId.value !== sessionId.value
+    || (payload.sessionId && payload.sessionId !== sessionId.value)
+    || (payload.ticketId && payload.ticketId !== ticketId.value)
+    || (payload.clientMsgId && payload.clientMsgId !== streamingClientMessageId.value)) {
+    return
+  }
+  streamingThinking.value += payload.content
+  scrollToBottom()
+}
+
 function onWsChatChunk(data: unknown) {
   const payload = data as WsChatChunk
   if (streamingSessionId.value !== sessionId.value
@@ -568,6 +587,8 @@ function onWsChatDone(data: unknown) {
   ) {
     return
   }
+  const matchesCurrentStream = !payload.clientMsgId || payload.clientMsgId === streamingClientMessageId.value
+  const completedThinking = matchesCurrentStream && streamingThinking.value ? streamingThinking.value : undefined
   upsertIncomingMessage({
     id: payload.id ?? 0,
     messageId: payload.messageId,
@@ -580,8 +601,10 @@ function onWsChatDone(data: unknown) {
     finishReason: payload.finishReason,
     citations: payload.citations,
     taskPlan: payload.taskPlan,
+    thinking: completedThinking,
   })
-  if (!payload.clientMsgId || payload.clientMsgId === streamingClientMessageId.value) {
+  if (matchesCurrentStream) {
+    streamingThinking.value = ''
     streamingContent.value = ''
     streamingSessionId.value = null
     streamingClientMessageId.value = null
@@ -1026,6 +1049,13 @@ onUnmounted(() => {
                       : '我'
                 }}
               </div>
+              <details
+                v-if="message.senderType === 'BOT' && message.thinking"
+                class="thinking-panel"
+              >
+                <summary>已深度思考</summary>
+                <div class="thinking-content">{{ message.thinking }}</div>
+              </details>
               <div class="bubble">{{ message.content }}</div>
               <div
                 v-if="message.senderType === 'BOT'"
@@ -1130,7 +1160,19 @@ onUnmounted(() => {
           <div class="sender-avatar" aria-hidden="true">AI</div>
           <div class="bubble-wrap">
             <div class="badge">智能助手</div>
-            <div class="bubble">
+            <details
+              v-if="streamingThinking"
+              class="thinking-panel"
+              :class="{ 'thinking-active': streamingThinkingOnly }"
+              :open="streamingThinkingOnly || undefined"
+            >
+              <summary>
+                <van-loading v-if="streamingThinkingOnly" size="12" class="thinking-spinner" />
+                <span>{{ streamingThinkingOnly ? '思考中…' : '已深度思考' }}</span>
+              </summary>
+              <div class="thinking-content">{{ streamingThinking }}</div>
+            </details>
+            <div v-if="streamingContent" class="bubble">
               {{ streamingContent }}<span class="cursor" aria-hidden="true">|</span>
             </div>
           </div>
@@ -1766,6 +1808,63 @@ onUnmounted(() => {
   background: rgba(24, 119, 242, 0.08);
 }
 
+.thinking-panel {
+  margin-bottom: 6px;
+  padding: 0 12px;
+  border: 1px solid var(--cw-line, #e3e7ef);
+  border-radius: 12px;
+  background: var(--cw-card-bg, #f7f9fc);
+  color: var(--cw-text-secondary, #5d6d83);
+  font-size: 13px;
+}
+
+.thinking-panel[open] {
+  padding-bottom: 10px;
+}
+
+.thinking-panel summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  cursor: pointer;
+  font-weight: 500;
+  list-style: none;
+}
+
+.thinking-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.thinking-panel summary::after {
+  content: '▾';
+  margin-left: auto;
+  font-size: 12px;
+  transition: transform 0.15s ease;
+}
+
+.thinking-panel[open] summary::after {
+  transform: rotate(180deg);
+}
+
+.thinking-panel summary:focus-visible {
+  outline: 2px solid var(--van-primary-color, #1677ff);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.thinking-spinner {
+  flex-shrink: 0;
+}
+
+.thinking-content {
+  padding-top: 8px;
+  border-top: 1px solid rgba(19, 35, 58, 0.08);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .cursor {
   animation: blink 1s step-start infinite;
 }
@@ -1944,6 +2043,10 @@ onUnmounted(() => {
   .status-pulse::after,
   .cursor {
     animation: none;
+  }
+
+  .thinking-panel summary::after {
+    transition: none;
   }
 }
 </style>

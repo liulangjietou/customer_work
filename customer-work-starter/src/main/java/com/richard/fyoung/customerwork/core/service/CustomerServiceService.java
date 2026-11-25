@@ -33,6 +33,7 @@ import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
 import io.agentscope.core.event.AgentResultEvent;
 import io.agentscope.core.event.TextBlockDeltaEvent;
+import io.agentscope.core.event.ThinkingBlockDeltaEvent;
 import io.agentscope.core.message.Msg;
 import io.agentscope.harness.agent.HarnessAgent;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -294,22 +295,26 @@ public class CustomerServiceService {
     }
 
     /**
-     * 把 guard 挂到文本流上：逐片过滤（可能整片被缓冲而不发），流末尾 flush 出留住的尾巴。
+     * 把 guard 挂到事件流的正文分片上：正文逐片过滤（可能整片被缓冲而不发），流末尾 flush 出留住的尾巴；
+     * 思考增量不进正文缓冲，避免与正式答复混流。
      *
      * <p>不 flush 会吞掉正文末尾仍可能扩展成敏感词的歧义前缀——它们被刻意留住等待下一片。</p>
      */
-    private Flux<String> applyOutboundGuard(Flux<String> source, SensitiveWordStreamGuard guard) {
+    private Flux<ChatStreamEvent> applyOutboundGuard(Flux<ChatStreamEvent> source, SensitiveWordStreamGuard guard) {
         if (guard == null) {
             return source;
         }
         return source
-            .mapNotNull(text -> {
-                String emit = guard.accept(text);
-                return emit.isEmpty() ? null : emit;
+            .mapNotNull(event -> {
+                if (event instanceof ChatStreamEvent.Thinking) {
+                    return event;
+                }
+                String emit = guard.accept(((ChatStreamEvent.Text) event).content());
+                return emit.isEmpty() ? null : new ChatStreamEvent.Text(emit);
             })
             .concatWith(Flux.defer(() -> {
                 String tail = guard.flush();
-                return tail.isEmpty() ? Flux.empty() : Flux.just(tail);
+                return tail.isEmpty() ? Flux.empty() : Flux.just(new ChatStreamEvent.Text(tail));
             }));
     }
 
@@ -454,26 +459,41 @@ public class CustomerServiceService {
     }
 
     /**
-     * 处理一条用户消息，流式返回增量文本（对应⑤ 逐 token 渲染）。
+     * 处理一条用户消息，流式返回正文增量文本（对应⑤ 逐 token 渲染，不含推理思考过程）。
      *
-     * <p>订阅框架的细粒度事件流 {@code streamEvents(...)}，只取正文增量 {@code TEXT_BLOCK_DELTA} 下发。
-     * 会话状态由框架在流结束后自动持久化。</p>
+     * <p>需要同时接收思考增量与正文增量的调用方（如 {@link ChatTurnService}）应使用
+     * {@link #chatStreamEvents(String, String)}。</p>
+     *
+     * @return 增量文本片段流（Flux，非阻塞）
+     */
+    public Flux<String> chatStream(String sessionId, String userText) {
+        return chatStreamEvents(sessionId, userText)
+            .ofType(ChatStreamEvent.Text.class)
+            .map(ChatStreamEvent.Text::content);
+    }
+
+    /**
+     * 处理一条用户消息，流式返回结构化事件（推理思考增量 {@link ChatStreamEvent.Thinking} 与正文增量
+     * {@link ChatStreamEvent.Text}）。
+     *
+     * <p>订阅框架的细粒度事件流 {@code streamEvents(...)}，仅透传主智能体（{@code source == null}）的
+     * 思考增量与正文增量。思考过程不进入语义缓存，也不计入最终答复正文。会话状态由框架在流结束后自动持久化。</p>
      *
      * <p><b>为什么不用 {@code stream(msgs, options, ctx)}</b>：那组重载已标记 {@code forRemoval}，且它按
      * {@code isLast=true} 回放"每轮推理整段 + 最终 AGENT_RESULT 全文"，消费侧必须自己做两级去重才不会让
      * 用户看到同一段话重复 2-3 遍。细粒度事件把"增量"和"汇总"拆成了不同事件类型，去重逻辑随之消失。</p>
      *
-     * @return 增量文本片段流（Flux，非阻塞）
+     * @return 流式事件（Flux，非阻塞）
      */
-    public Flux<String> chatStream(String sessionId, String userText) {
+    public Flux<ChatStreamEvent> chatStreamEvents(String sessionId, String userText) {
         log.info("[session {}] received user message (stream): {}", sessionId, userText);
         QuotaDecision quota = quotaGuard.check(null);
         if (shouldRejectForQuota(quota)) {
-            return Flux.just(QUOTA_EXCEEDED_REPLY);
+            return Flux.just(new ChatStreamEvent.Text(QUOTA_EXCEEDED_REPLY));
         }
         AgentSessionKey sessionKey = sessionKey(sessionId);
         touchSession(sessionKey);
-        Flux<String> result;
+        Flux<ChatStreamEvent> result;
         if (semanticCache == null) {
             result = streamFromAgent(sessionKey, userText, new ReplyFinish());
         } else {
@@ -519,11 +539,12 @@ public class CustomerServiceService {
      * <p><b>命中的内容仍要过一遍出站敏感词过滤</b>：写入时合规不代表现在合规，词库是会变的。
      * 过滤器对已经干净的文本是幂等的，这一遍纯内存操作，成本可以忽略。</p>
      */
-    private Flux<String> streamCachedAnswer(String answer) {
+    private Flux<ChatStreamEvent> streamCachedAnswer(String answer) {
         incr(M_CACHE_HIT);
-        List<String> chunks = new ArrayList<>();
+        List<ChatStreamEvent> chunks = new ArrayList<>();
         for (int i = 0; i < answer.length(); i += CACHED_ANSWER_CHUNK_SIZE) {
-            chunks.add(answer.substring(i, Math.min(i + CACHED_ANSWER_CHUNK_SIZE, answer.length())));
+            chunks.add(new ChatStreamEvent.Text(
+                answer.substring(i, Math.min(i + CACHED_ANSWER_CHUNK_SIZE, answer.length()))));
         }
         return applyOutboundGuard(Flux.fromIterable(chunks), newOutboundGuard());
     }
@@ -531,8 +552,8 @@ public class CustomerServiceService {
     /**
      * 走 Agent 并在流正常结束后异步写缓存。
      *
-     * <p>累积的是<b>过滤后</b>的文本——缓存的必须是真正发给用户的那一份，
-     * 否则下次命中会把未过滤内容直接吐出去。</p>
+     * <p>累积的是<b>过滤后的正式正文</b>——思考增量不进缓存，缓存的必须是真正发给用户的那份答复，
+     * 否则下次命中会把未过滤内容或思考过程直接吐出去。</p>
      *
      * <p>用 {@code doOnComplete} 而不是 {@code doFinally}：后者在错误路径上也会跑，
      * 而中途失败的流里累积的是"半截回答 + 兜底文案"，把它缓存下来，之后每个问到同类问题的人
@@ -540,13 +561,17 @@ public class CustomerServiceService {
      * 所以写不写仍由 {@link ReplyFinish} 判定：{@link #streamFromAgent} 在收到最终结果时记下结束原因、
      * 走兜底时标记降级。</p>
      */
-    private Flux<String> streamFromAgentAndCache(SemanticCacheService.CacheGeneration cacheGeneration,
-                                                 AgentSessionKey sessionKey, String userText) {
+    private Flux<ChatStreamEvent> streamFromAgentAndCache(SemanticCacheService.CacheGeneration cacheGeneration,
+                                                          AgentSessionKey sessionKey, String userText) {
         String sessionId = sessionKey.sessionId();
         StringBuilder accumulated = new StringBuilder();
         ReplyFinish finish = new ReplyFinish();
         return streamFromAgent(sessionKey, userText, finish)
-            .doOnNext(accumulated::append)
+            .doOnNext(event -> {
+                if (event instanceof ChatStreamEvent.Text text) {
+                    accumulated.append(text.content());
+                }
+            })
             .doOnComplete(() -> cacheReply(cacheGeneration, sessionId, userText, accumulated.toString(), finish));
     }
 
@@ -556,14 +581,14 @@ public class CustomerServiceService {
      * @param finish 出参：记下最终结果的结束原因，走了兜底（超时 / 调用失败）时标记降级；
      *               调用方据此决定写不写缓存
      */
-    private Flux<String> streamFromAgent(AgentSessionKey sessionKey, String userText, ReplyFinish finish) {
+    private Flux<ChatStreamEvent> streamFromAgent(AgentSessionKey sessionKey, String userText, ReplyFinish finish) {
         String sessionId = sessionKey.sessionId();
         Agent agent = resolveAgent(sessionKey);
         RuntimeContext ctx = agentFactory.contextFor(sessionId);
         bindCallMeta(ctx, agent, userText);
 
         // 观察窗口在拿到会话锁之后打开、流终止（含取消与超时）时关闭，理由同 invokeAgent
-        Flux<String> flux = withSessionLockFlux(sessionKey, Flux.using(
+        Flux<ChatStreamEvent> flux = withSessionLockFlux(sessionKey, Flux.using(
             () -> finish.watchHandoffs(watchHandoffs(sessionId)),
             watch -> {
                 // 兜底标记（每次订阅独立）：正常流式下模型逐块吐 TEXT_BLOCK_DELTA，最终的 AGENT_RESULT
@@ -583,14 +608,19 @@ public class CustomerServiceService {
                         if (event.getSource() != null) {
                             return null;
                         }
-                        // 正文增量：只认 TextBlock，思考过程（THINKING_BLOCK_DELTA）不下发给用户
+                        // 推理思考增量：透传给前端展示「思考中」折叠面板，不计入正式答复与语义缓存
+                        if (event instanceof ThinkingBlockDeltaEvent thinking) {
+                            String delta = thinking.getDelta();
+                            return delta == null || delta.isEmpty() ? null : new ChatStreamEvent.Thinking(delta);
+                        }
+                        // 正文增量：面向用户的正式答复
                         if (event instanceof TextBlockDeltaEvent delta) {
                             String text = delta.getDelta();
                             if (text == null || text.isEmpty()) {
                                 return null;
                             }
                             deltaSeen.set(true);
-                            return text;
+                            return new ChatStreamEvent.Text(text);
                         }
                         if (event instanceof AgentResultEvent result) {
                             // 最终结果标明本轮怎么收的尾：用尽、待审批、被打断的答复都不能进缓存
@@ -600,7 +630,7 @@ public class CustomerServiceService {
                                 return null;
                             }
                             String text = result.getResult() == null ? null : result.getResult().getTextContent();
-                            return text == null || text.isEmpty() ? null : text;
+                            return text == null || text.isEmpty() ? null : new ChatStreamEvent.Text(text);
                         }
                         return null;
                     }), guard);
@@ -618,15 +648,15 @@ public class CustomerServiceService {
             if (e instanceof TimeoutException) {
                 log.error("[session {}] stream idle timeout after {}s, closing, code={}",
                     sessionId, idle, "STREAM_IDLE_TIMEOUT");
-                return Flux.just(FALLBACK_REPLY);
+                return Flux.just(new ChatStreamEvent.Text(FALLBACK_REPLY));
             }
             if (isFallbackModelUnavailable(e)) {
                 log.error("[session {}] quota fallback unavailable, code={}",
                     sessionId, "QUOTA-DEGRADE-FALLBACK-UNAVAILABLE", e);
-                return Flux.just(QUOTA_EXCEEDED_REPLY);
+                return Flux.just(new ChatStreamEvent.Text(QUOTA_EXCEEDED_REPLY));
             }
             log.error("[session {}] stream chat failed, code={}", sessionId, "AGENT_STREAM_ERROR", e);
-            return Flux.just(FALLBACK_REPLY);
+            return Flux.just(new ChatStreamEvent.Text(FALLBACK_REPLY));
         });
     }
 

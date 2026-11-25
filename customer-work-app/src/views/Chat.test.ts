@@ -702,4 +702,61 @@ describe('Chat', () => {
     expect(submitFeedbackMock).toHaveBeenCalledTimes(2)
     expect(up.attributes('aria-pressed')).toBe('true')
   })
+
+  it('推理思考增量展示思考中折叠态，正文到来后切换为已深度思考并在定稿后保留', async () => {
+    const wrapper = await mountReadyChat()
+    await wrapper.get('.message-input').setValue('帮我分析退款规则')
+    await wrapper.get('.send-button').trigger('click')
+    const command = sendMock.mock.calls[0][0].data
+
+    // 跨会话思考增量不得污染当前会话
+    wsHandlers.get('chat_thinking')?.({
+      sessionId: 'other-session',
+      ticketId: 'other-ticket',
+      content: '不应显示的思考',
+    })
+    await flushPromises()
+    expect(wrapper.find('.thinking-panel').exists()).toBe(false)
+
+    // 仅思考增量到达：展示「思考中…」且默认展开
+    wsHandlers.get('chat_thinking')?.({
+      sessionId: 'session-1',
+      ticketId: 'ticket-1',
+      clientMsgId: command.clientMsgId,
+      content: '先核对七天无理由条款',
+    })
+    await flushPromises()
+    const streamingThinkingPanel = wrapper.get('.thinking-panel')
+    expect(streamingThinkingPanel.text()).toContain('思考中…')
+    expect(streamingThinkingPanel.text()).toContain('先核对七天无理由条款')
+    expect(streamingThinkingPanel.attributes('open')).toBeDefined()
+
+    // 正文增量到达：切换为「已深度思考」并展示正文气泡
+    wsHandlers.get('chat_chunk')?.({
+      sessionId: 'session-1',
+      ticketId: 'ticket-1',
+      clientMsgId: command.clientMsgId,
+      content: '支持七天无理由退货',
+    })
+    await flushPromises()
+    expect(wrapper.get('.thinking-panel summary').text()).toContain('已深度思考')
+    expect(wrapper.text()).toContain('支持七天无理由退货')
+
+    // 定稿后保留折叠态思考面板且清空流式光标
+    wsHandlers.get('chat_done')?.({
+      id: 99,
+      messageId: 'msg-thinking-1',
+      sessionId: 'session-1',
+      ticketId: 'ticket-1',
+      clientMsgId: command.clientMsgId,
+      content: '支持七天无理由退货',
+      finishReason: 'MODEL_STOP',
+      ts: Date.now(),
+    })
+    await flushPromises()
+    expect(wrapper.find('.cursor').exists()).toBe(false)
+    expect(wrapper.get('.thinking-panel summary').text()).toContain('已深度思考')
+    expect(wrapper.get('.thinking-panel .thinking-content').text()).toContain('先核对七天无理由条款')
+    wrapper.unmount()
+  })
 })

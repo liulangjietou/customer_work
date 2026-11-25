@@ -120,6 +120,27 @@ class CustomerServiceControllerTest {
     }
 
     @Test
+    void chatStream_shouldEmitThinkingSseEvent() {
+        ChatTerminalEnvelope terminal = new ChatTerminalEnvelope("MSG-10", "MODEL_STOP",
+            new ChatUsageSnapshot(10, 4, 0, 14, 0.2), "trace-10", List.of(), List.of());
+        ChatMessage message = ChatMessage.of("MSG-10", "u1", null,
+            TicketActorType.BOT, null, "您好");
+        when(chatTurnService.stream(anyString(), anyString(), org.mockito.ArgumentMatchers.isNull()))
+            .thenReturn(Flux.just(
+                new ChatTurnEvent.Thinking("正在分析问题"),
+                new ChatTurnEvent.Delta("您好"),
+                new ChatTurnEvent.Completed(new ChatTurnCompletion(message, terminal))));
+
+        webTestClient.post().uri("/api/customer/chat/stream")
+            .bodyValue(new ChatRequest("u1", "你好"))
+            .exchange()
+            .expectStatus().isOk()
+            .expectBody(String.class)
+            .value(body -> org.assertj.core.api.Assertions.assertThat(body)
+                .contains("event:thinking", "正在分析问题", "event:message", "您好", "event:done"));
+    }
+
+    @Test
     void classifyIntent_shouldReturnStructuredResult() {
         when(service.classifyIntent(anyString(), anyString()))
             .thenReturn(Mono.just(new IntentResult("refund", "20260613001", true, "用户要求退款")));

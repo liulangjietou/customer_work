@@ -214,6 +214,8 @@ export interface ChatMessage {
   citations?: KnowledgeCitation[] | null
   /** 助手记录的计划及进度，不能据此确认业务执行成功。 */
   taskPlan?: TaskPlanItem[] | null
+  /** 推理模型的思考过程（当前会话内流式采集，刷新历史后不落库）。 */
+  thinking?: string | null
 }
 
 export interface ReasonPayload {
@@ -264,6 +266,14 @@ export interface WsChatMessage {
   senderId: string | null
   content: string
   ts: number
+}
+
+/** 服务端 -> 用户：机器人推理思考增量 */
+export interface WsChatThinking {
+  content: string
+  sessionId?: string
+  ticketId?: string
+  clientMsgId?: string
 }
 
 /** 服务端 -> 用户：机器人流式增量 */

@@ -20,6 +20,8 @@ public record WsFrame(String type, Object data) {
     public static final String TYPE_CHAT = "chat";
     /** 输入已落库；重复投递返回同一条消息，不表示 AI 或业务工具已经完成。 */
     public static final String TYPE_CHAT_ACCEPTED = "chat_accepted";
+    /** AI 推理思考增量片段。 */
+    public static final String TYPE_CHAT_THINKING = "chat_thinking";
     /** AI 流式增量片段。 */
     public static final String TYPE_CHAT_CHUNK = "chat_chunk";
     /** AI 流式结束（携带落库后的 messageId）。 */
@@ -100,6 +102,16 @@ public record WsFrame(String type, Object data) {
         data.put(KEY_TICKET_ID, message.ticketId());
         data.put(KEY_TS, message.createdAtMs());
         return new WsFrame(TYPE_CHAT_ACCEPTED, data);
+    }
+
+    /** AI 推理思考增量帧：{@code {content, sessionId, ticketId, clientMsgId}}。 */
+    public static WsFrame chatThinking(String content, String sessionId, String ticketId, String clientMsgId) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put(KEY_CONTENT, content);
+        data.put(KEY_SESSION_ID, sessionId);
+        data.put(KEY_TICKET_ID, ticketId);
+        data.put(KEY_CLIENT_MSG_ID, clientMsgId);
+        return new WsFrame(TYPE_CHAT_THINKING, data);
     }
 
     /** AI 流式增量帧：{@code {content}}。 */
