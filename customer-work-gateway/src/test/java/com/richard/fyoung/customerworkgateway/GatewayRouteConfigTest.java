@@ -8,6 +8,7 @@ import org.springframework.cloud.gateway.route.RouteLocator;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -39,5 +40,6 @@ class GatewayRouteConfigTest {
         assertTrue(routeIds.contains("customer-admin-server"), "应含 admin 路由");
         assertTrue(routeIds.contains("customer-work-app-server"), "应含 app-server 路由");
         assertTrue(routeIds.contains("customer-work-app-server-ws"), "应含 WebSocket 路由");
+        assertEquals(3, routeIds.size(), "网关应只暴露 admin/app/ws 三条路由");
     }
 }
