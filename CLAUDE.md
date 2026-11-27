@@ -37,6 +37,16 @@
 
 ## 构建与测试（关键坑，全部实测踩过）
 
+- 2026-11-27 工具级耗时逐工具计时（无迁移）：只跑了 starter 模块，BUILD SUCCESS，**starter 2261/135 skip**
+  （本机未起 MySQL，跳过数偏高属预期，见下文 MySQL 说明；其它模块未重跑）。本批次自身加 starter **+8**
+  （`AgentCallTimingMiddlewareTest` 2 + `ManagedToolkitPerToolTimingTest` 5 + `AgentCallTimingRealAgentIntegrationTest` 1）。两条经验：
+  ① **框架工具事件的时间戳是批次边界**：`ReActAgent.runToolBatch` 先一次性发全部 `ToolResultStartEvent`，
+  整批执行完再一次性发全部 `ToolResultEndEvent`，从事件流按 `toolCallId` 计时只能得到整批之和。
+  逐工具计时改在 `ManagedToolkit` 覆写 6 参 `callTools`、串行逐个 `super.callTools`，经 ctx 里的 `ToolCallObserver` 回写；
+  ② **反编译得出的框架语义要用真实 ReActAgent 测试钉住**：「框架调的是 6 参重载」「`buildMergedRuntimeContext` 会复制 ctx 的 typed 属性」
+  两条单测证明不了，靠 `managedToolkit_twoToolsInOneTurn_shouldRecordPerToolSegments`；关掉拆批的变异会让 2 条测试变红。
+  `frameworkContract_sixArgCallToolsIsOverridable` 在框架改签名时报警，免得报表静默退回批次级。
+
 - 2026-09-25 意图分类不再转人工（无迁移，客服端仍从 **V31**、Admin 从 **V115** 核对）：全模块
   BUILD SUCCESS，starter 2356/6 skip、app-server 302、customer-channel 82、admin 2287/1 skip、gateway 1，
   **合计 5028**（排除 `RedisSessionPersistenceTest`，rebase 到含 #251/#252 的 main 之后实测）。本批次自身加 starter **+5**

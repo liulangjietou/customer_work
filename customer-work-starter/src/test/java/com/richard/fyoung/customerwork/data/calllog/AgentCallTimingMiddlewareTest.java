@@ -17,6 +17,8 @@ import io.agentscope.core.message.Msg;
 import io.agentscope.core.model.ChatUsage;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.TextBlock;
+import com.richard.fyoung.customerwork.tool.ToolCallObserver;
+import io.agentscope.core.message.ToolResultBlock;
 import io.agentscope.core.message.ToolResultState;
 import io.agentscope.core.message.ToolUseBlock;
 import io.agentscope.core.middleware.ActingInput;
@@ -127,6 +129,81 @@ class AgentCallTimingMiddlewareTest {
             .anyMatch(seg -> !seg.success());
         assertTrue(anyFailed,
             "批内有工具失败却被记成成功——失败率被静默抹平，运维在真出问题时看到的是一条平稳曲线");
+    }
+
+    /**
+     * 逐工具计时：观察者逐个回调时，每个工具各记一段，各自成败，不再出现 {@code a+b} 的批次段。
+     *
+     * <p>观察者由 onActing 放进 ctx，供 ManagedToolkit 在串行逐个执行时回调。这里直接从 ctx 取出来
+     * 模拟两次回调（不同耗时、不同结果），断言分段按工具拆开。</p>
+     */
+    @Test
+    void perToolObserver_shouldRecordOneSegmentPerTool() {
+        ToolKindRegistry registry = new ToolKindRegistry();
+        AtomicReference<AgentCallRecord> captured = new AtomicReference<>();
+        AgentCallTimingMiddleware mw = new AgentCallTimingMiddleware(enabledProps(), registry, captured::set, null);
+        RuntimeContext ctx = ctx();
+        ToolUseBlock t1 = new ToolUseBlock("t1", "queryOrder", Map.of());
+        ToolUseBlock t2 = new ToolUseBlock("t2", "queryLogistics", Map.of());
+
+        mw.onAgent(agent, ctx, new AgentInput(List.of(msg(MsgRole.USER, "查订单和物流"))), ai ->
+            mw.onActing(agent, ctx, new ActingInput(List.of(t1, t2)), act -> Flux.defer(() -> {
+                ToolCallObserver observer = ctx.get(ToolCallObserver.class);
+                assertNotNull(observer, "onActing 必须把观察者放进 ctx，否则 ManagedToolkit 无处回调");
+                long now = System.currentTimeMillis();
+                observer.onToolCompleted(t1, ToolResultBlock.text("ok").withState(ToolResultState.SUCCESS),
+                    now, 300_000_000L, null);
+                observer.onToolCompleted(t2, ToolResultBlock.text("fail").withState(ToolResultState.ERROR),
+                    now, 20_000_000L, null);
+                return Flux.just(
+                    new ToolResultEndEvent("r", "t1", "queryOrder", ToolResultState.SUCCESS),
+                    new ToolResultEndEvent("r", "t2", "queryLogistics", ToolResultState.ERROR));
+            }))
+        ).blockLast();
+
+        List<AgentCallSegment> tools = captured.get().segments().stream()
+            .filter(seg -> seg.kind() == AgentCallKind.TOOL).toList();
+        assertEquals(2, tools.size(), "两个工具各一段、且不再有兜底的批次段：" + tools);
+        AgentCallSegment order = tools.stream().filter(s -> s.name().equals("queryOrder")).findFirst().orElseThrow();
+        AgentCallSegment logistics = tools.stream().filter(s -> s.name().equals("queryLogistics")).findFirst().orElseThrow();
+        assertTrue(order.success(), "queryOrder 成功");
+        assertFalse(logistics.success(), "queryLogistics 失败不能被 queryOrder 的成功抹平");
+        assertTrue(order.durationMs() >= 290 && logistics.durationMs() < 100,
+            "耗时按各自回调记录，不再是整批之和：" + tools);
+        assertNull(ctx.get(ToolCallObserver.class), "批次结束后观察者要从 ctx 摘掉，免得下一批误用");
+    }
+
+    /**
+     * 兜底：观察者只覆盖到一部分工具（HITL 拒绝、非 ManagedToolkit 等），剩下的仍记一段批次级耗时，
+     * 且段名只含未覆盖的那部分，不把已单独计时的工具再算一遍。
+     */
+    @Test
+    void perToolObserver_partialCoverage_shouldFallbackOnlyForUnobservedTools() {
+        ToolKindRegistry registry = new ToolKindRegistry();
+        AtomicReference<AgentCallRecord> captured = new AtomicReference<>();
+        AgentCallTimingMiddleware mw = new AgentCallTimingMiddleware(enabledProps(), registry, captured::set, null);
+        RuntimeContext ctx = ctx();
+        ToolUseBlock t1 = new ToolUseBlock("t1", "queryOrder", Map.of());
+        ToolUseBlock t2 = new ToolUseBlock("t2", "queryLogistics", Map.of());
+
+        mw.onAgent(agent, ctx, new AgentInput(List.of(msg(MsgRole.USER, "查订单和物流"))), ai ->
+            mw.onActing(agent, ctx, new ActingInput(List.of(t1, t2)), act -> Flux.defer(() -> {
+                ctx.get(ToolCallObserver.class).onToolCompleted(t1,
+                    ToolResultBlock.text("ok").withState(ToolResultState.SUCCESS),
+                    System.currentTimeMillis(), 1_000_000L, null);
+                return Flux.just(
+                    new ToolResultEndEvent("r", "t1", "queryOrder", ToolResultState.SUCCESS),
+                    new ToolResultEndEvent("r", "t2", "queryLogistics", ToolResultState.ERROR));
+            }))
+        ).blockLast();
+
+        List<String> names = captured.get().segments().stream()
+            .filter(seg -> seg.kind() == AgentCallKind.TOOL).map(AgentCallSegment::name).toList();
+        assertEquals(List.of("queryOrder", "queryLogistics"), names,
+            "已观察的单独一段 + 未观察的兜底一段，兜底段名不含已计时的 queryOrder");
+        AgentCallSegment fallback = captured.get().segments().stream()
+            .filter(seg -> seg.name().equals("queryLogistics")).findFirst().orElseThrow();
+        assertFalse(fallback.success(), "兜底段状态只看未观察工具的结果");
     }
 
     @Test

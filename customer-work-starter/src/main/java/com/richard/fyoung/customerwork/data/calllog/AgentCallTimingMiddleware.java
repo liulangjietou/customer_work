@@ -11,6 +11,7 @@ import com.richard.fyoung.customerwork.safety.quota.TenantQuotaGuard;
 import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubject;
 import com.richard.fyoung.customerwork.safety.subjectquota.QuotaSubjectContext;
 import com.richard.fyoung.customerwork.safety.subjectquota.SubjectQuotaGuard;
+import com.richard.fyoung.customerwork.tool.ToolCallObserver;
 import io.agentscope.core.agent.Agent;
 import io.agentscope.core.agent.AgentBase;
 import io.agentscope.core.agent.RuntimeContext;
@@ -20,6 +21,7 @@ import io.agentscope.core.event.ModelCallEndEvent;
 import io.agentscope.core.event.ToolResultEndEvent;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.model.ChatUsage;
+import io.agentscope.core.message.ToolResultBlock;
 import io.agentscope.core.message.ToolResultState;
 import io.agentscope.core.message.ToolUseBlock;
 import io.agentscope.core.middleware.ActingInput;
@@ -36,6 +38,8 @@ import reactor.core.publisher.Flux;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
@@ -239,20 +243,23 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
         if (collector == null) {
             return next.apply(input);
         }
-        String toolName = batchToolName(input);
-        AgentCallKind kind = toolKindRegistry.classify(toolName);
         AgentReplayCapture.ToolBatchCapture replayBatch = beginReplayTools(collector, input);
+        // 逐工具计时：ManagedToolkit 在串行模式下逐个执行并回调观察者，每个工具各记一段。
+        // 观察者在框架合并 RuntimeContext 之前放进 ctx（合并发生在 dispatchToolCalls，晚于本 hook）
+        PerToolObserver observer = new PerToolObserver(collector);
+        bindObserver(ctx, observer);
         // 工具执行成败取自流中的 ToolResultEndEvent（onError 兜底捕获异常）
         // 记"这一批里最差的那个结果"而不是最后一个：一批多工具时，
         // 前面的工具失败、最后一个成功，按"最后一个"会把整段记成成功——失败率被静默抹平，
-        // 而那正是最需要被看见的数据
+        // 而那正是最需要被看见的数据。只统计观察者没覆盖到的工具，它们才落进兜底的批次段
         AtomicReference<ToolResultState> lastState = new AtomicReference<>(null);
         Flux<AgentEvent> upstream = next.apply(input)
             .doOnNext(event -> {
                 if (replayBatch != null) {
                     replayBatch.onEvent(event);
                 }
-                if (event instanceof ToolResultEndEvent tre && tre.getState() != null) {
+                if (event instanceof ToolResultEndEvent tre && tre.getState() != null
+                    && !observer.observed(tre.getToolCallId())) {
                     lastState.updateAndGet(prev -> worstOf(prev, tre.getState()));
                 }
             })
@@ -260,9 +267,144 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
             .doOnCancel(() -> completeReplayTools(replayBatch, "CANCELLED", CANCELLED))
             .doOnComplete(() -> completeReplayTools(replayBatch,
                 lastState.get() == null ? "SUCCESS" : lastState.get().name(),
-                isSuccess(lastState) ? null : "tool result state=" + lastState.get()));
+                isSuccess(lastState) ? null : "tool result state=" + lastState.get()))
+            .doFinally(signal -> unbindObserver(ctx, observer));
         // 工具段无 token 概念，usageRef 传 null
-        return timeSegment(upstream, collector, kind, toolName, lastState, null, null);
+        return timeToolBatch(upstream, collector, input, observer, lastState);
+    }
+
+    /**
+     * 工具批次的兜底计时：结束时只为观察者<b>没覆盖到</b>的工具记一段批次级耗时。
+     *
+     * <p>没覆盖到的情况：HITL / 权限规则拒绝（框架不进 Toolkit）、{@code generate_response}
+     * 结构化输出工具、非 {@link com.richard.fyoung.customerwork.tool.ManagedToolkit} 的 Toolkit、并行模式。
+     * 全部覆盖时不记批次段——否则同一段时间会被算两次。</p>
+     */
+    private Flux<AgentEvent> timeToolBatch(Flux<AgentEvent> upstream, AgentCallCollector collector,
+                                           ActingInput input, PerToolObserver observer,
+                                           AtomicReference<ToolResultState> stateRef) {
+        long[] startMs = new long[1];
+        long[] startNano = new long[1];
+        AtomicBoolean ended = new AtomicBoolean(false);
+        return upstream
+            .doOnSubscribe(s -> {
+                startMs[0] = System.currentTimeMillis();
+                startNano[0] = System.nanoTime();
+            })
+            .doOnComplete(() -> {
+                if (ended.compareAndSet(false, true)) {
+                    boolean success = isSuccess(stateRef);
+                    String err = success ? null : "tool result state=" + stateRef.get();
+                    addFallbackToolSegment(collector, input, observer, startMs[0], startNano[0], success, err);
+                }
+            })
+            .doOnError(e -> {
+                if (ended.compareAndSet(false, true)) {
+                    addFallbackToolSegment(collector, input, observer, startMs[0], startNano[0],
+                        false, safeMsg(e));
+                }
+            })
+            .doOnCancel(() -> {
+                if (ended.compareAndSet(false, true)) {
+                    addFallbackToolSegment(collector, input, observer, startMs[0], startNano[0],
+                        false, CANCELLED);
+                }
+            });
+    }
+
+    private void addFallbackToolSegment(AgentCallCollector collector, ActingInput input,
+                                        PerToolObserver observer, long startMs, long startNano,
+                                        boolean success, String errorMsg) {
+        String name = batchToolName(unobservedCalls(input, observer));
+        if (name == null) {
+            return;
+        }
+        addSegment(collector, toolKindRegistry.classify(name), name, startMs, startNano,
+            success, errorMsg, null, null);
+    }
+
+    /** 批内观察者未覆盖的工具调用；{@code input} 为空时视为整批未知。 */
+    private List<ToolUseBlock> unobservedCalls(ActingInput input, PerToolObserver observer) {
+        List<ToolUseBlock> calls = input == null ? null : input.toolCalls();
+        if (calls == null || calls.isEmpty()) {
+            return observer.isEmpty() ? null : List.of();
+        }
+        List<ToolUseBlock> rest = new ArrayList<>(calls.size());
+        for (ToolUseBlock call : calls) {
+            if (call == null || !observer.observed(call.getId())) {
+                rest.add(call);
+            }
+        }
+        return rest;
+    }
+
+    /**
+     * 逐工具计时的观察者：每个工具结束时各记一段 TOOL / MCP / SKILL 分段。
+     *
+     * <p>只在本次 onActing 有效；记下已覆盖的 {@code toolCallId}，批次收尾据此决定兜底段的范围。</p>
+     */
+    private final class PerToolObserver implements ToolCallObserver {
+        private final AgentCallCollector collector;
+        private final Set<String> observedIds = ConcurrentHashMap.newKeySet();
+
+        private PerToolObserver(AgentCallCollector collector) {
+            this.collector = collector;
+        }
+
+        @Override
+        public void onToolCompleted(ToolUseBlock call, ToolResultBlock result,
+                                    long startTimeMs, long durationNanos, Throwable error) {
+            try {
+                if (call == null) {
+                    return;
+                }
+                if (call.getId() != null) {
+                    observedIds.add(call.getId());
+                }
+                String name = call.getName() == null || call.getName().isBlank() ? UNKNOWN : call.getName();
+                ToolResultState state = result == null ? null : result.getState();
+                boolean success = error == null && isSuccessState(state);
+                String errorMsg = error != null ? safeMsg(error)
+                    : (success ? null : "tool result state=" + state);
+                collector.addSegment(toolKindRegistry.classify(name), name, startTimeMs,
+                    System.nanoTime() - durationNanos, success, errorMsg, null, null, null, null);
+            } catch (Exception e) {
+                log.error("per-tool segment collect failed, code={}", "CALLLOG-TOOL-SEGMENT-FAIL", e);
+            }
+        }
+
+        boolean observed(String toolCallId) {
+            return toolCallId != null && observedIds.contains(toolCallId);
+        }
+
+        boolean isEmpty() {
+            return observedIds.isEmpty();
+        }
+    }
+
+    private void bindObserver(RuntimeContext ctx, ToolCallObserver observer) {
+        if (ctx == null) {
+            return;
+        }
+        try {
+            ctx.put(ToolCallObserver.class, observer);
+        } catch (Exception e) {
+            log.error("tool call observer bind failed, code={}", "CALLLOG-OBSERVER-BIND-FAIL", e);
+        }
+    }
+
+    /** 只移除自己放的那个：嵌套调用时内层收尾不能把外层的观察者摘掉。 */
+    private void unbindObserver(RuntimeContext ctx, ToolCallObserver observer) {
+        if (ctx == null) {
+            return;
+        }
+        try {
+            if (ctx.get(ToolCallObserver.class) == observer) {
+                ctx.put(ToolCallObserver.class, null);
+            }
+        } catch (Exception e) {
+            log.error("tool call observer unbind failed, code={}", "CALLLOG-OBSERVER-UNBIND-FAIL", e);
+        }
     }
 
     /**
@@ -468,29 +610,16 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
         return first == null ? null : first.getTextContent();
     }
 
-    /**
-     * 本批次的工具名。
-     *
-     * <p><b>一批可能有多个工具</b>：模型一轮可以同时发起 {@code queryOrder} 与
-     * {@code queryLogistics}，而这与工具是串行还是并行执行无关（{@code toolCalls()} 本就是列表）。
-     * 此前只取第一个，于是第二个工具的耗时被算到第一个头上——工具级 P95 张冠李戴，
-     * 而报表上看不出任何异常。</p>
-     *
-     * <p>现在把这一批的工具名全记下来（{@code a+b} 形式）。这仍不是"每个工具各自耗时"，
-     * 但至少不再冤枉任何一个：看到 {@code queryOrder+queryLogistics} 的人知道这段是两者之和。
-     * 精确到单工具需要按事件流的 {@code toolCallId} 逐个计时，而那依赖框架事件时序的语义
-     * （哪个事件才是"该工具开始执行"），需要单独确认后再做。</p>
-     */
-    /**
-     * 取两个工具结果里"更差"的那个：只要批内有一个不成功，整段就不算成功。
-     *
-     * <p>方向是刻意的——把失败漏报成成功，会让运维在真正出问题时看到一条平稳的曲线。</p>
-     */
     /** 单个工具结果是否算成功：{@code RUNNING} 视为尚未失败，{@code null} 视为无结果即成功。 */
     private boolean isSuccessState(ToolResultState state) {
         return state == null || state == ToolResultState.SUCCESS || state == ToolResultState.RUNNING;
     }
 
+    /**
+     * 取两个工具结果里"更差"的那个：只要批内有一个不成功，整段就不算成功。
+     *
+     * <p>方向是刻意的——把失败漏报成成功，会让运维在真正出问题时看到一条平稳的曲线。</p>
+     */
     private ToolResultState worstOf(ToolResultState previous, ToolResultState current) {
         if (previous == null) {
             return current;
@@ -500,10 +629,22 @@ public class AgentCallTimingMiddleware implements MiddlewareBase {
         return isSuccessState(previous) ? current : previous;
     }
 
-    private String batchToolName(ActingInput input) {
-        List<ToolUseBlock> calls = input == null ? null : input.toolCalls();
-        if (calls == null || calls.isEmpty()) {
+    /**
+     * 兜底批次段的段名。
+     *
+     * <p>逐工具计时已由 {@link PerToolObserver} 承担（ManagedToolkit 串行逐个回调），
+     * 这里只给观察者没覆盖到的那部分工具命名。一批多个仍记成 {@code a+b}：
+     * 看到它的人知道这段是几个工具之和，而不是把第二个的耗时算到第一个头上。</p>
+     *
+     * @param calls 未被观察到的调用；{@code null} 表示整批未知（记 unknown），空列表表示全部已覆盖（不记）
+     * @return 段名；全部已覆盖时返回 {@code null}
+     */
+    private String batchToolName(List<ToolUseBlock> calls) {
+        if (calls == null) {
             return UNKNOWN;
+        }
+        if (calls.isEmpty()) {
+            return null;
         }
         List<String> names = new ArrayList<>(calls.size());
         for (ToolUseBlock call : calls) {
