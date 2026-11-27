@@ -4,7 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/liulangjietou/customer_work)](https://github.com/liulangjietou/customer_work/releases)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-17%2B-orange.svg)](docs/新人必读.md)
-[![AgentScope](https://img.shields.io/badge/AgentScope-2.0.3-green.svg)](https://github.com/agentscope-ai/agentscope-java)
+[![AgentScope](https://img.shields.io/badge/AgentScope-2.0.5-green.svg)](https://github.com/agentscope-ai/agentscope-java)
 [![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.2.5-6DB33F.svg)](https://spring.io/projects/spring-boot)
 [![MyBatis-Plus](https://img.shields.io/badge/MyBatis--Plus-3.5.7-0F766E.svg)](https://baomidou.com)
 [![Sa-Token](https://img.shields.io/badge/Sa--Token-1.39.0-FF5C5C.svg)](https://sa-token.cc)
@@ -53,7 +53,7 @@ customer-work 把典型客服流程落成一套可运行的 Java Agent 系统：
 客服产品参考实现，也能只引入 `customer-work-starter`，把 Agent 基础设施嵌入已有 Spring Boot 应用；
 默认启动成功不等于已经完成真实业务、身份、数据主权与生产环境集成。
 
-- **技术基线**：项目版本 `2.4.0`，JDK 17、Spring Boot 3.2.5、AgentScope Java 2.0.3；默认模型为
+- **技术基线**：项目版本 `2.4.0`，JDK 17、Spring Boot 3.2.5、AgentScope Java 2.0.5；默认模型为
   阿里云百炼，同时已接入 OpenAI、Anthropic、Gemini 与 Ollama 模型扩展。
 - **两套产品面**：用户侧客服系统（H5 / HTTP / SSE / WebSocket / 工单）与运营控制台（模型、Agent、MCP、
   渠道、评测、发布、账单、工单与 AI 编码助手）。
@@ -593,7 +593,7 @@ Roadmap 按风险与验收出口排序，不承诺未经评估的日期，也不
 
 - **分支策略**：`main` 有分支保护、禁止直接 push，开发从 `main` 切分支走 PR；`legacy-main-1.0.12` 标签与
   `rc2.0` 分支为历史存档，不再更新。
-- 基于官方坐标 `io.agentscope:agentscope-harness:2.0.3`（`agentscope-bom` 统一管理版本）；框架高速迭代，
+- 基于官方坐标 `io.agentscope:agentscope-harness:2.0.5`（`agentscope-bom` 统一管理版本）；框架高速迭代，
   升级遇 API 不匹配请对照该版本源码微调。
 - API Key 使用 `keyId + SHA-256 hash + scope + expiry + epoch`；生产门禁拒绝旧明文列表，原始 secret 只由调用方通过 Secret / KMS 保管。
 - 客服业务库由 starter Flyway 管理；admin 在 dev / test 运行 Flyway、生产由 DBA 执行镜像 SQL。存量库升级只新增迁移，

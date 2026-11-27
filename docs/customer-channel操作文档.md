@@ -1,6 +1,6 @@
 # customer-channel 操作文档（AgentScope 2.0 配套前端 · 客服 Agent 控制台 + 对话入口）
 
-> 模块：`customer-channel` ｜ 依赖：`agentscope-admin` + `agentscope-chat-completions-web` + `agentscope-agui`（均 2.0.0 GA starter）｜ 分支：`main` ｜ Web 栈：Spring **MVC** ｜ JDK 17
+> 模块：`customer-channel` ｜ 依赖：`agentscope-admin` + `agentscope-chat-completions-web` + `agentscope-agui`（均 2.0.5 starter，经 `agentscope-bom` 管理）｜ 分支：`main` ｜ Web 栈：Spring **MVC** ｜ JDK 17
 >
 > **模块定位**：多渠道接入演示模块（官方五套前端能力接入），非主链路必需。
 

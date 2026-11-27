@@ -1,6 +1,6 @@
 # customer-work 项目工作手册（AI 会话用）
 
-基于 AgentScope Java 2.0.3 的生产级智能客服系统 + 后台管理系统。本文件只放**每次会话都需要的事实与坑**；
+基于 AgentScope Java 2.0.5 的生产级智能客服系统 + 后台管理系统。本文件只放**每次会话都需要的事实与坑**；
 细节现场读代码和 docs/ 下的文档，不要在这里复制它们。
 
 ## 模块结构
@@ -11,6 +11,7 @@
 | `customer-work-app-server` | 可运行客服示例（端口 8080） |
 | `customer-channel` | 多渠道接入演示模块（官方五套前端能力接入：admin/chat-completions/AG-UI/Studio/Channel，端口 8081），非主链路必需 |
 | `customer-admin-server` | 后台管理系统后端（Spring MVC + MyBatis-Plus + Sa-Token，端口 8082，独立库 `customer_admin`；**登录态存 Redis**，Redis 不可达则登录 fail-closed，见 `AdminSaTokenDaoConfig`） |
+| `customer-work-gateway` | 可选统一入口网关（Spring Cloud Gateway + Nacos 服务发现，端口 8888，聚合 8080 / 8082），非主链路必需 |
 | `customer-admin-web` | 后台管理前端（Vue3+TS+Vite+Element Plus，**非 Maven 模块**，端口 5174） |
 | `customer-work-app` | 智能客服用户端 H5（Vue3+TS+Vite+Vant4，**非 Maven 模块**，端口 5175，proxy → 8080） |
 
@@ -908,7 +909,7 @@ mvn -gs scripts/settings-central-direct.xml -s scripts/settings-central-direct.x
   漏刷新由 `CustomerWorkSchemaSnapshotTest` / `CustomerAdminSchemaSnapshotTest` 拦下：它们每次跑测试都重新
   迁移一个临时库比对快照，不一致会指出是哪张表的第几行。**门禁与生成共用 `SchemaSnapshotExporter` 一段逻辑**，
   不会出现「脚本生成的和门禁期望的不是一回事」。两条相关事实：
-  ① 客服端快照刻意不含框架自建的 `agentscope_sessions`（`MysqlSession` 内置 DDL 建的，没有迁移可导出它）；
+  ① 客服端快照刻意不含框架自建的 `agentscope_sessions`（框架 `MysqlAgentStateStore` 按内置 DDL 建的，`version` 列也由它在构造时补，没有迁移可导出它）；
   ② 快照内容取决于 `SHOW CREATE TABLE` 的输出格式，跨 MySQL 大版本升级后需要重新生成一次，那是预期内的
   一次性刷新而不是漂移。
 - **surefire 3.1.2 的跳过空匹配参数是 `-Dsurefire.failIfNoSpecifiedTests=false`**，不带 `surefire.` 前缀的

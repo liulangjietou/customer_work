@@ -2,11 +2,12 @@
 -- AgentScope 智能客服系统 · 会话持久化 MySQL 建库建表脚本
 -- =============================================================================
 -- 说明：
---   1. MysqlSession 在 autoCreate=true 时会自动建库建表，本脚本用于手工初始化 /
---      DBA 审核 / 受限权限环境（生产 DB 账号通常无建库权限）。
---   2. 会话表结构与框架 io.agentscope.core.session.mysql.MysqlSession 内置 DDL 一致；
---      cw_* 业务表由 starter 的 SchemaInitializer（MyBatis-Plus 持久层）在 auto-create=true 时执行
---      classpath:customerwork/schema/customer-work-schema.sql 建表，本脚本的 cw_* DDL 与之保持一致。
+--   1. 框架 io.agentscope.extensions.mysql.state.MysqlAgentStateStore 在 auto-create=true 时会自动
+--      建库建表，本脚本用于手工初始化 / DBA 审核 / 受限权限环境（生产 DB 账号通常无建库权限）。
+--   2. agentscope_sessions 的 version 列（AgentScope 2.0.3 起的乐观并发）由框架在 Store 构造时自动补；
+--      运行账号只有 DML 权限时，改用同目录 customer-work-agent-state-version-alter.sql 手工补列。
+--      cw_* 业务表的真源是 starter 的 Flyway 迁移（db/customerwork/migration，由
+--      CustomerWorkSchemaMigrator 执行），本脚本的 cw_* DDL 与迁移产物保持一致。
 --   3. 连接信息（默认）：host=localhost:3306, user=root, password=root,
 --      database=agent_scope_customer_work。
 --
