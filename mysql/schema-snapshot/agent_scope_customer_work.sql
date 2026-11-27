@@ -10,7 +10,7 @@
 --       改结构一律新增迁移，改本文件不会生效。
 -- 用途：结构查阅与全新建库。**不要对已有库执行**，这里没有 IF NOT EXISTS 保护。
 -- 缺表说明：框架会话表 agentscope_sessions 不在本快照内——它由 AgentScope 的
---           MysqlSession 在首次连接时按内置 DDL 自建，不归 Flyway 管，因此也没有
+--           MysqlAgentStateStore 在构造时按内置 DDL 自建，不归 Flyway 管，因此也没有
 --           迁移可以导出它。用本快照建库后由框架自行补上，不是遗漏。
 -- 建库：CREATE DATABASE `agent_scope_customer_work`
 --         DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
