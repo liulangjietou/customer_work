@@ -1,6 +1,7 @@
 package com.richard.fyoung.customerwork.data.calllog;
 
 import com.richard.fyoung.customerwork.infra.config.CustomerWorkProperties;
+import com.richard.fyoung.customerwork.tool.ManagedToolkit;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
@@ -186,6 +187,90 @@ class AgentCallTimingRealAgentIntegrationTest {
         assertEquals(Long.valueOf(modelSegCount), record.inputTokens(), "请求级输入 token = 各 MODEL 段之和");
         assertEquals(Long.valueOf(modelSegCount), record.outputTokens(), "请求级输出 token = 各 MODEL 段之和");
         assertEquals(Long.valueOf(modelSegCount * 2), record.totalTokens(), "请求级总 token");
+    }
+
+    /** 两个耗时差很大的离线工具：用来区分「各自计时」与「整批之和」。 */
+    public static class SlowFastTools {
+        @Tool(description = "慢查询")
+        public Mono<String> slowQuery(@ToolParam(name = "q", description = "q") String q) {
+            return Mono.delay(Duration.ofMillis(200)).thenReturn("slow:" + q);
+        }
+
+        @Tool(description = "快查询")
+        public Mono<String> fastQuery(@ToolParam(name = "q", description = "q") String q) {
+            return Mono.just("fast:" + q);
+        }
+    }
+
+    /** 第一轮同时发起两个工具调用，第二轮收敛。 */
+    private static Model twoToolStubModel() {
+        AtomicInteger calls = new AtomicInteger(0);
+        return new Model() {
+            @Override
+            public Flux<ChatResponse> stream(List<Msg> messages, List<ToolSchema> tools,
+                                             GenerateOptions options) {
+                if (calls.getAndIncrement() == 0) {
+                    return Flux.just(ChatResponse.builder()
+                        .id(UUID.randomUUID().toString())
+                        .content(List.of(
+                            new ToolUseBlock("call-slow", "slowQuery", Map.of("q", "a")),
+                            new ToolUseBlock("call-fast", "fastQuery", Map.of("q", "b"))))
+                        .usage(new ChatUsage(1, 1, 0.0))
+                        .finishReason("tool_calls")
+                        .build());
+                }
+                return Flux.just(ChatResponse.builder()
+                    .id(UUID.randomUUID().toString())
+                    .content(List.of(TextBlock.builder().text(FINAL_REPLY).build()))
+                    .usage(new ChatUsage(1, 1, 0.0))
+                    .finishReason("stop")
+                    .build());
+            }
+
+            @Override
+            public String getModelName() {
+                return MODEL_NAME;
+            }
+        };
+    }
+
+    /**
+     * 真实 ReAct 循环 + ManagedToolkit：一轮两个工具时，落库是两个独立 TOOL 段，各自耗时。
+     *
+     * <p>这一例同时证实两件反编译得出、单测盖不住的事：框架调的确实是被覆写的 6 参 {@code callTools}；
+     * {@code buildMergedRuntimeContext} 复制了中间件放进 ctx 的观察者。任何一条不成立，这里会退回
+     * {@code slowQuery+fastQuery} 一段——那时要先回头核对框架语义，不要改断言。</p>
+     */
+    @Test
+    void managedToolkit_twoToolsInOneTurn_shouldRecordPerToolSegments() {
+        AtomicReference<AgentCallRecord> captured = new AtomicReference<>();
+        AgentCallTimingMiddleware middleware =
+            new AgentCallTimingMiddleware(enabledProps(), new ToolKindRegistry(), captured::set, null);
+        ManagedToolkit toolkit = new ManagedToolkit();
+        toolkit.registerTool(new SlowFastTools());
+        ReActAgent agent = ReActAgent.builder()
+            .name("per-tool-timing")
+            .sysPrompt("先调用工具再回答。")
+            .model(twoToolStubModel())
+            .toolkit(toolkit)
+            .maxIters(3)
+            .middleware(middleware)
+            .build();
+
+        RuntimeContext ctx = RuntimeContext.builder().userId("u").sessionId("sess-per-tool").build();
+        ctx.put(AgentCallMeta.class, meta());
+        agent.streamEvents(List.of(userMsg()), ctx).count().block(BLOCK_TIMEOUT);
+
+        AgentCallRecord record = captured.get();
+        assertNotNull(record);
+        List<AgentCallSegment> tools = record.segments().stream()
+            .filter(s -> s.kind() == AgentCallKind.TOOL).toList();
+        assertEquals(List.of("slowQuery", "fastQuery"), tools.stream().map(AgentCallSegment::name).toList(),
+            "应是两个独立工具段，而不是 slowQuery+fastQuery 一段：" + tools);
+        assertTrue(tools.get(0).durationMs() >= 180, "慢工具耗时是它自己的：" + tools);
+        assertTrue(tools.get(1).durationMs() < tools.get(0).durationMs() - 150,
+            "快工具没有分到慢工具的耗时：" + tools);
+        assertTrue(tools.stream().allMatch(AgentCallSegment::success));
     }
 
     /**

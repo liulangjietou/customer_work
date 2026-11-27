@@ -1,11 +1,18 @@
 package com.richard.fyoung.customerwork.tool;
 
+import io.agentscope.core.agent.Agent;
+import io.agentscope.core.agent.RuntimeContext;
+import io.agentscope.core.message.ToolResultBlock;
+import io.agentscope.core.message.ToolUseBlock;
+import io.agentscope.core.model.ExecutionConfig;
+import io.agentscope.core.tool.ToolRequestConfig;
 import io.agentscope.core.tool.Toolkit;
 import com.richard.fyoung.customerwork.infra.config.properties.ToolExecutionProperties;
 import io.agentscope.core.tool.ToolkitConfig;
 import io.agentscope.core.tool.mcp.McpClientWrapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
@@ -15,6 +22,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiConsumer;
 
 /**
  * 对 MCP 客户端拥有明确生命周期的 Toolkit。
@@ -31,6 +39,7 @@ public class ManagedToolkit extends Toolkit implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(ManagedToolkit.class);
     private static final String CODE_MCP_CLOSE_FAIL = "MCP-CLIENT-CLOSE-FAIL";
+    private static final String CODE_OBSERVER_FAIL = "TOOL-CALL-OBSERVER-FAIL";
     private static final Duration CLOSE_TIMEOUT = Duration.ofSeconds(10);
 
     /**
@@ -44,14 +53,18 @@ public class ManagedToolkit extends Toolkit implements AutoCloseable {
      * 对客服对话等于没有超时。默认值就该是安全的，需要按配置调整的链路用带参构造器。</p>
      */
     public ManagedToolkit() {
-        super(ToolkitConfigs.sequentialWith(new ToolExecutionProperties()));
+        this(ToolkitConfigs.sequentialWith(new ToolExecutionProperties()));
     }
 
     /** 需要自定义执行配置时使用（例如后续接入工具级超时与重试）。 */
     public ManagedToolkit(ToolkitConfig config) {
         super(config);
+        // Toolkit 没有暴露配置的 getter，只能在这里记一份：并行模式下不拆批
+        this.parallel = config != null && config.isParallel();
     }
 
+    /** 执行模式快照：并行时逐工具计时不成立（各工具同时跑），原样交给框架。 */
+    private final boolean parallel;
     private final Object lifecycleMonitor = new Object();
     private final Set<String> mcpClientNames = new LinkedHashSet<>();
     private final AtomicBoolean closed = new AtomicBoolean();
@@ -74,6 +87,79 @@ public class ManagedToolkit extends Toolkit implements AutoCloseable {
             // 注册完成与关闭并发：关闭快照可能已经生成，由本次注册自行回收。
             return super.removeMcpClient(wrapper.getName());
         }));
+    }
+
+    /**
+     * 串行模式下把一批工具拆成逐个执行，给每个工具各自计时后交给 {@link ToolCallObserver}。
+     *
+     * <p>框架的 4 参 / 5 参 {@code callTools} 都委托到这个 6 参重载，{@code ReActAgent.dispatchToolCalls}
+     * 调的也是它（AgentScope 2.0.5，{@code ToolkitCallToolsContractTest} 钉住）。拆批后每个工具仍走
+     * {@code super.callTools}，超时 / 重试 / 停机守卫 / 外部工具覆盖都原样保留；串行时框架内部本就是
+     * {@code Flux.concat}，这里换成外层 {@code Flux.concat} 顺序语义不变。</p>
+     *
+     * <p>以下情况原样交给框架、不拆批：并行模式（各工具同时跑，逐个计时无意义）、
+     * 上下文里没有观察者（没人要这份数据）、空批次。</p>
+     */
+    @Override
+    public Mono<List<ToolResultBlock>> callTools(List<ToolUseBlock> toolCalls,
+                                                 ExecutionConfig executionConfig,
+                                                 Agent agent,
+                                                 RuntimeContext runtimeContext,
+                                                 ToolRequestConfig toolRequestConfig,
+                                                 BiConsumer<ToolUseBlock, ToolResultBlock> chunkCallback) {
+        ToolCallObserver observer = observerOf(runtimeContext);
+        if (parallel || observer == null || toolCalls == null || toolCalls.isEmpty()) {
+            return super.callTools(toolCalls, executionConfig, agent, runtimeContext,
+                toolRequestConfig, chunkCallback);
+        }
+        List<Mono<ToolResultBlock>> timed = new ArrayList<>(toolCalls.size());
+        for (ToolUseBlock call : toolCalls) {
+            timed.add(timedSingleCall(call, executionConfig, agent, runtimeContext,
+                toolRequestConfig, chunkCallback, observer));
+        }
+        return Flux.concat(timed).collectList();
+    }
+
+    private Mono<ToolResultBlock> timedSingleCall(ToolUseBlock call,
+                                                  ExecutionConfig executionConfig,
+                                                  Agent agent,
+                                                  RuntimeContext runtimeContext,
+                                                  ToolRequestConfig toolRequestConfig,
+                                                  BiConsumer<ToolUseBlock, ToolResultBlock> chunkCallback,
+                                                  ToolCallObserver observer) {
+        long[] startMs = new long[1];
+        long[] startNano = new long[1];
+        return Mono.defer(() -> super.callTools(List.of(call), executionConfig, agent, runtimeContext,
+                toolRequestConfig, chunkCallback))
+            .map(results -> results.isEmpty() ? null : results.get(0))
+            .doOnSubscribe(s -> {
+                startMs[0] = System.currentTimeMillis();
+                startNano[0] = System.nanoTime();
+            })
+            .doOnSuccess(result -> notify(observer, call, result, startMs[0], startNano[0], null))
+            .doOnError(error -> notify(observer, call, null, startMs[0], startNano[0], error));
+    }
+
+    /** 观察者异常只记日志：计时失败不该让一次成功的工具调用变成失败。 */
+    private static void notify(ToolCallObserver observer, ToolUseBlock call, ToolResultBlock result,
+                               long startMs, long startNano, Throwable error) {
+        try {
+            observer.onToolCompleted(call, result, startMs, System.nanoTime() - startNano, error);
+        } catch (Exception e) {
+            log.error("tool call observer failed, code={}, tool={}", CODE_OBSERVER_FAIL,
+                call == null ? null : call.getName(), e);
+        }
+    }
+
+    private static ToolCallObserver observerOf(RuntimeContext runtimeContext) {
+        if (runtimeContext == null) {
+            return null;
+        }
+        try {
+            return runtimeContext.get(ToolCallObserver.class);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**
